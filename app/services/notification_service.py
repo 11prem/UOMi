@@ -1,6 +1,6 @@
 """Notification cards: creating them, listing them page by page, and marking them read."""
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.notification import Notification, NotificationType
@@ -15,8 +15,7 @@ def create_notification(
     db: Session,
     username: str,
     notification_type: NotificationType,
-    title: str,
-    body: str = "",
+    message: str,
     space_id: int | None = None,
     ref_id: int | None = None,
 ) -> Notification:
@@ -28,13 +27,26 @@ def create_notification(
     notification = Notification(
         username=username,
         type=notification_type,
-        title=title,
-        body=body,
+        message=message,
         space_id=space_id,
         ref_id=ref_id,
     )
     db.add(notification)
     return notification
+
+
+def _out(notification: Notification) -> NotificationOut:
+    """The API shape is unchanged for now: the old title and body are both the message."""
+    return NotificationOut(
+        id=notification.id,
+        type=notification.type,
+        title=notification.message,
+        body=notification.message,
+        space_id=notification.space_id,
+        ref_id=notification.ref_id,
+        is_read=notification.read,
+        created_at=notification.created_at,
+    )
 
 
 def list_notifications(db: Session, username: str, before: int | None, limit: int) -> NotificationList:
@@ -46,39 +58,19 @@ def list_notifications(db: Session, username: str, before: int | None, limit: in
     page = rows[:limit]
     has_more = len(rows) > limit
     return NotificationList(
-        items=[NotificationOut.model_validate(row) for row in page],
+        items=[_out(row) for row in page],
         next_before=page[-1].id if has_more else None,
     )
-def get_unread_count(db: Session, username: str) -> int:
-    """Return the number of unread notifications for one user."""
-    stmt = select(func.count()).select_from(Notification).where(
-        Notification.username == username,
-        Notification.is_read.is_(False),
-    )
-    return db.scalar(stmt) or 0
 
-def set_read(db: Session, username: str, notification_id: int, is_read: bool) -> Notification:
+
+def set_read(db: Session, username: str, notification_id: int, is_read: bool) -> NotificationOut:
     """Mark a card read or unread. Someone else's card is reported as not found."""
     notification = db.scalar(
         select(Notification).where(Notification.id == notification_id, Notification.username == username)
     )
     if notification is None:
         raise api_error(404, "notification_not_found", "Notification not found.")
-    notification.is_read = is_read
+    notification.read = is_read
     db.commit()
     db.refresh(notification)
-    return notification
-
-def mark_all_as_read(db: Session, username: str) -> int:
-    """Mark all unread notifications belonging to one user as read."""
-    stmt = (
-        update(Notification)
-        .where(
-            Notification.username == username,
-            Notification.is_read.is_(False),
-        )
-        .values(is_read=True)
-    )
-    result = db.execute(stmt)
-    db.commit()
-    return result.rowcount or 0
+    return _out(notification)

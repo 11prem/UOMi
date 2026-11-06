@@ -31,6 +31,11 @@ from app.utils.errors import api_error
 BILLS_LIMIT = 50
 
 
+def _money(minor: int) -> Decimal:
+    """The API still shows amounts as two-place decimals; it switches to integer minor units later."""
+    return Decimal(minor).scaleb(-2)
+
+
 def create_space(db: Session, creator: User, data: SpaceCreate) -> Space:
     """Add People page, tick to create. One transaction: the space, its members, and one
     "you were added" card for each person added."""
@@ -55,8 +60,7 @@ def create_space(db: Session, creator: User, data: SpaceCreate) -> Space:
             db,
             username,
             NotificationType.SPACE_ADDED,
-            title=f"Added to {space.name}",
-            body=f"{creator.name} added you to {space.name}.",
+            message=f"{creator.name} added you to {space.name}.",
             space_id=space.id,
         )
     db.commit()
@@ -83,14 +87,14 @@ def list_spaces(db: Session, user: User) -> SpaceListOut:
     balances = balance_service.get_balances(db, user.username, [space.id for space, _ in rows])
     return SpaceListOut(
         currency=user.currency,
-        overall_balance=sum(balances.values(), balance_service.ZERO),
+        overall_balance=_money(sum(balances.values(), balance_service.ZERO)),
         spaces=[
             SpaceSummary(
                 id=space.id,
                 name=space.name,
                 icon=space.icon,
                 member_count=count,
-                balance=balances[space.id],
+                balance=_money(balances[space.id]),
             )
             for space, count in rows
         ],
@@ -113,7 +117,7 @@ def get_space_detail(db: Session, user: User, space_id: int) -> SpaceDetailOut:
     names = {username: name for username, name, _ in member_rows}
 
     bill_rows = db.execute(
-        select(Expense, User.name, ExpenseShare.amount, ExpenseShare.status)
+        select(Expense, User.name, ExpenseShare.amount_minor, ExpenseShare.status)
         .select_from(Expense)
         .join(User, User.username == Expense.paid_by)
         .outerjoin(
@@ -133,22 +137,22 @@ def get_space_detail(db: Session, user: User, space_id: int) -> SpaceDetailOut:
         name=space.name,
         icon=space.icon,
         currency=user.currency,
-        balance=balance_service.get_space_balance(db, user.username, space_id),
+        balance=_money(balance_service.get_space_balance(db, user.username, space_id)),
         members=[MemberOut(username=u, name=n, position=p) for u, n, p in member_rows],
         bills=[
             BillOut(
                 id=expense.id,
-                title=expense.title,
-                amount=expense.amount,
+                title=expense.description,
+                amount=_money(expense.amount_minor),
                 paid_by=UserSummary(username=expense.paid_by, name=payer_name),
                 created_at=expense.created_at,
-                my_share=my_share,
+                my_share=None if my_share is None else _money(my_share),
                 my_share_status=my_share_status,
             )
             for expense, payer_name, my_share, my_share_status in bill_rows
         ],
         who_owes_whom=[
-            DebtOut(debtor=person(d.debtor), creditor=person(d.creditor), amount=d.amount)
+            DebtOut(debtor=person(d.debtor), creditor=person(d.creditor), amount=_money(d.amount))
             for d in balance_service.get_debts(db, space_id)
         ],
     )

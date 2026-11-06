@@ -10,11 +10,12 @@ For one person in one space:
 
 Only ACCEPTED shares and CONFIRMED settlements count. A share still waiting for its tick or cross
 does not count yet, and a rejected one never does.
+
+Every amount here is an integer in minor units (paise, cents).
 """
 
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,17 +24,17 @@ from app.models.expense import Expense
 from app.models.expense_split import ExpenseShare, ShareStatus
 from app.models.payment import Settlement, SettlementStatus
 
-ZERO = Decimal("0.00")
+ZERO = 0
 
 
 @dataclass(frozen=True)
 class Debt:
     debtor: str
     creditor: str
-    amount: Decimal
+    amount: int
 
 
-def get_balances(db: Session, username: str, space_ids: list[int]) -> dict[int, Decimal]:
+def get_balances(db: Session, username: str, space_ids: list[int]) -> dict[int, int]:
     """The user's balance in each of the given spaces, using four grouped queries in total."""
     if not space_ids:
         return {}
@@ -43,7 +44,7 @@ def get_balances(db: Session, username: str, space_ids: list[int]) -> dict[int, 
 
     def shares(*conditions):
         return (
-            select(Expense.space_id, func.sum(ExpenseShare.amount))
+            select(Expense.space_id, func.sum(ExpenseShare.amount_minor))
             .select_from(ExpenseShare)
             .join(Expense, Expense.id == ExpenseShare.expense_id)
             .where(Expense.space_id.in_(space_ids), accepted, *conditions)
@@ -52,7 +53,7 @@ def get_balances(db: Session, username: str, space_ids: list[int]) -> dict[int, 
 
     def settlements(*conditions):
         return (
-            select(Settlement.space_id, func.sum(Settlement.amount))
+            select(Settlement.space_id, func.sum(Settlement.amount_minor))
             .where(Settlement.space_id.in_(space_ids), confirmed, *conditions)
             .group_by(Settlement.space_id)
         )
@@ -69,16 +70,16 @@ def get_balances(db: Session, username: str, space_ids: list[int]) -> dict[int, 
     return balances
 
 
-def get_space_balance(db: Session, username: str, space_id: int) -> Decimal:
+def get_space_balance(db: Session, username: str, space_id: int) -> int:
     return get_balances(db, username, [space_id])[space_id]
 
 
 def get_debts(db: Session, space_id: int) -> list[Debt]:
     """Who owes whom in a space: one line per pair of people, netted against each other."""
-    net: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)  # (debtor, creditor) -> amount
+    net: dict[tuple[str, str], int] = defaultdict(lambda: ZERO)  # (debtor, creditor) -> amount
 
     share_rows = db.execute(
-        select(ExpenseShare.username, Expense.paid_by, func.sum(ExpenseShare.amount))
+        select(ExpenseShare.username, Expense.paid_by, func.sum(ExpenseShare.amount_minor))
         .select_from(ExpenseShare)
         .join(Expense, Expense.id == ExpenseShare.expense_id)
         .where(
@@ -92,7 +93,7 @@ def get_debts(db: Session, space_id: int) -> list[Debt]:
         net[(debtor, creditor)] += total
 
     settlement_rows = db.execute(
-        select(Settlement.payer, Settlement.payee, func.sum(Settlement.amount))
+        select(Settlement.payer, Settlement.payee, func.sum(Settlement.amount_minor))
         .where(Settlement.space_id == space_id, Settlement.status == SettlementStatus.CONFIRMED)
         .group_by(Settlement.payer, Settlement.payee)
     )

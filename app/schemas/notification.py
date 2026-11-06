@@ -29,9 +29,3 @@ class NotificationList(BaseModel):
 
 class NotificationUpdate(BaseModel):
     is_read: bool
-
-class UnreadCount(BaseModel):
-    unread_count: int
-
-class MarkAllReadResponse(BaseModel):
-    updated_count: int

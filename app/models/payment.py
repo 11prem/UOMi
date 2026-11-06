@@ -6,17 +6,18 @@ Only CONFIRMED settlements count towards balances.
 
 import enum
 from datetime import datetime
-from decimal import Decimal
 
-from sqlalchemy import Enum, ForeignKey, Numeric, String
+from sqlalchemy import Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, UTCDateTime, utcnow
 
 
 class SettlementStatus(str, enum.Enum):
-    PENDING = "pending"  # the payer recorded it, the other person has not confirmed
+    PENDING = "pending"  # the payer recorded it, the other person has not answered
     CONFIRMED = "confirmed"
+    REJECTED = "rejected"  # the other person says it did not happen
+    CANCELLED = "cancelled"  # the payer took it back
 
 
 class Settlement(Base):
@@ -26,9 +27,9 @@ class Settlement(Base):
     space_id: Mapped[int] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"), index=True)
     payer: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))  # who handed over money
     payee: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))  # who received it
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    amount_minor: Mapped[int]  # integer minor units (paise, cents)
     status: Mapped[SettlementStatus] = mapped_column(
         Enum(SettlementStatus, native_enum=False, length=20), default=SettlementStatus.PENDING
     )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
-    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    answered_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # when the payee confirmed or rejected it

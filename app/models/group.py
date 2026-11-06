@@ -17,5 +17,6 @@ class Space(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     icon: Mapped[str] = mapped_column(String(50))  # key of the icon chosen in the picker
+    currency: Mapped[str] = mapped_column(String(3), server_default="INR")  # ISO 4217 code, fixed at creation
     created_by: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

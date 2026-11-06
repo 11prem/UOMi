@@ -6,9 +6,8 @@ Only ACCEPTED shares count towards balances.
 
 import enum
 from datetime import datetime
-from decimal import Decimal
 
-from sqlalchemy import Enum, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, UTCDateTime
@@ -27,7 +26,8 @@ class ExpenseShare(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     expense_id: Mapped[int] = mapped_column(ForeignKey("expenses.id", ondelete="CASCADE"), index=True)
     username: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"), index=True)
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    amount_minor: Mapped[int]  # integer minor units (paise, cents)
+    input: Mapped[str | None] = mapped_column(String(20))  # what was typed: an amount, a percentage or a share count
     status: Mapped[ShareStatus] = mapped_column(
         Enum(ShareStatus, native_enum=False, length=20), default=ShareStatus.PENDING
     )

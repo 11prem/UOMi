@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from app.database import SessionLocal
+from app.database import SessionLocal, utcnow
 from app.models.expense import Expense
 from app.models.expense_split import ExpenseShare, ShareStatus
 from app.models.payment import Settlement, SettlementStatus
@@ -66,16 +66,28 @@ def db_all(statement) -> list:
         return list(session.scalars(statement).all())
 
 
+def minor(amount: str) -> int:
+    """The tests write amounts as decimal strings; the database holds minor units ('100.50' is 10050)."""
+    return int(Decimal(amount) * 100)
+
+
 def add_expense(space_id: int, paid_by: str, title: str, shares: dict[str, tuple[str, ShareStatus]]) -> int:
     """Insert a bill and its shares straight into the database. shares = {username: (amount, status)}."""
     with SessionLocal() as session:
-        total = sum((Decimal(amount) for amount, _ in shares.values()), Decimal("0"))
-        expense = Expense(space_id=space_id, paid_by=paid_by, title=title, amount=total)
+        total = sum(minor(amount) for amount, _ in shares.values())
+        expense = Expense(
+            space_id=space_id,
+            paid_by=paid_by,
+            created_by=paid_by,
+            description=title,
+            amount_minor=total,
+            date=utcnow().date(),
+        )
         session.add(expense)
         session.flush()
         for username, (amount, status) in shares.items():
             session.add(
-                ExpenseShare(expense_id=expense.id, username=username, amount=Decimal(amount), status=status)
+                ExpenseShare(expense_id=expense.id, username=username, amount_minor=minor(amount), status=status)
             )
         session.commit()
         return expense.id
@@ -83,5 +95,7 @@ def add_expense(space_id: int, paid_by: str, title: str, shares: dict[str, tuple
 
 def add_settlement(space_id: int, payer: str, payee: str, amount: str, status: SettlementStatus) -> None:
     with SessionLocal() as session:
-        session.add(Settlement(space_id=space_id, payer=payer, payee=payee, amount=Decimal(amount), status=status))
+        session.add(
+            Settlement(space_id=space_id, payer=payer, payee=payee, amount_minor=minor(amount), status=status)
+        )
         session.commit()
