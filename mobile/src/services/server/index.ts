@@ -135,8 +135,8 @@ export function createServerServices(opts: ServerOptions): Services {
         return r.items.map((n) => toNotification(n, who));
       },
       markRead: async (id) => void (await http.request<NotificationDto>('PATCH', `/notifications/${encodeURIComponent(id)}`, { read: true })),
-      markAllRead: () => http.request<void>('POST', '/notifications/read-all'),
-      unreadCount: async () => (await http.request<NotificationListDto>('GET', '/notifications?limit=1')).unread_count,
+      markAllRead: async () => void (await http.request<{ updated_count: number }>('PATCH', '/notifications/read-all')),
+      unreadCount: async () => (await http.request<{ unread_count: number }>('GET', '/notifications/unread-count')).unread_count,
     },
 
     profile: {

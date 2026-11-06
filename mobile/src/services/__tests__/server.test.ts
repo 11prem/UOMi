@@ -252,7 +252,7 @@ describe('the session', () => {
         return { body: pair(2) };
       }
       if (bearer(c) !== `Bearer ${valid}`) return fail(401, 'token_expired', 'Access token expired. Refresh it.');
-      return { body: c.path === '/spaces' ? HOME : { items: [], next_before: null, unread_count: 3 } };
+      return { body: c.path === '/spaces' ? HOME : { unread_count: 3 } };
     });
     const [list, unread] = await Promise.all([svc.spaces.list(), svc.notifications.unreadCount()]);
     expect(list).toHaveLength(3);
@@ -275,7 +275,7 @@ describe('the session', () => {
         if (c.path.startsWith('/notifications')) await sleep(40); // this 401 is slow: it lands after the refresh finished
         return fail(401, 'token_expired', 'Access token expired. Refresh it.');
       }
-      return { body: c.path === '/spaces' ? HOME : { items: [], next_before: null, unread_count: 1 } };
+      return { body: c.path === '/spaces' ? HOME : { unread_count: 1 } };
     });
     await Promise.all([svc.spaces.list(), svc.notifications.unreadCount()]);
     expect(calls.filter((c) => c.path === '/auth/refresh')).toHaveLength(1);
@@ -533,14 +533,14 @@ describe('notifications and people', () => {
 
   it('unreadCount, markRead and markAllRead', async () => {
     const { svc, calls } = make((c) => {
-      if (c.path === '/notifications/read-all') return { status: 204 };
+      if (c.path === '/notifications/read-all') return { body: { updated_count: 2 } };
       if (c.method === 'PATCH') return { body: note(7, { read: true }) };
-      return { body: { items: [note(7)], next_before: null, unread_count: 4 } };
+      return { body: { unread_count: 4 } };
     });
     expect(await svc.notifications.unreadCount()).toBe(4);
     await svc.notifications.markRead('7');
-    await svc.notifications.markAllRead();
-    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /notifications?limit=1', 'PATCH /notifications/7', 'POST /notifications/read-all']);
+    expect(await svc.notifications.markAllRead()).toBeUndefined(); // the count is ignored
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /notifications/unread-count', 'PATCH /notifications/7', 'PATCH /notifications/read-all']);
     expect(calls[1].body).toEqual({ read: true });
   });
 
