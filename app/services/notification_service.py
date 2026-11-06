@@ -48,14 +48,16 @@ def list_notifications(db: Session, username: str, before: int | None, limit: in
     rows = db.scalars(stmt.order_by(Notification.id.desc()).limit(limit + 1)).all()
     page = rows[:limit]
     has_more = len(rows) > limit
-    unread_count = db.scalar(
-        select(func.count()).where(Notification.username == username, Notification.read.is_(False))
-    )
     return NotificationList(
         items=[NotificationOut.model_validate(row) for row in page],
         next_before=page[-1].id if has_more else None,
-        unread_count=unread_count,
+        unread_count=get_unread_count(db, username),
     )
+
+
+def get_unread_count(db: Session, username: str) -> int:
+    """Every unread card of the caller (the badge on the bell)."""
+    return db.scalar(select(func.count()).where(Notification.username == username, Notification.read.is_(False))) or 0
 
 
 def set_read(db: Session, username: str, notification_id: int, read: bool) -> NotificationOut:
@@ -71,9 +73,10 @@ def set_read(db: Session, username: str, notification_id: int, read: bool) -> No
     return NotificationOut.model_validate(notification)
 
 
-def mark_all_read(db: Session, username: str) -> None:
-    """Notifications page, "mark all read": every unread card of the caller."""
-    db.execute(
+def mark_all_as_read(db: Session, username: str) -> int:
+    """Notifications page, "mark all read": every unread card of the caller. Returns how many were unread."""
+    result = db.execute(
         update(Notification).where(Notification.username == username, Notification.read.is_(False)).values(read=True)
     )
     db.commit()
+    return result.rowcount or 0

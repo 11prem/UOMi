@@ -22,7 +22,7 @@ Transactions and reminders are later rounds.
 | Create space | `POST /spaces` takes `name`, `icon`, optional `currency` and `usernames`; returns the Group page |
 | Home page | `GET /spaces` returns `overall` (one line per currency) and `spaces` (one card per space, latest activity first) |
 | Group page | `GET /spaces/{id}` returns the members, expenses, payments and who owes whom (`pairwise`) |
-| Notifications | `GET /notifications?before=&limit=` returns `items`, `next_before`, `unread_count`; `PATCH /notifications/{id}` takes `{"read": true}`; `POST /notifications/read-all` returns 204 |
+| Notifications | `GET /notifications?before=&limit=` returns `items`, `next_before`, `unread_count`; `GET /notifications/unread-count` returns `{"unread_count"}`; `PATCH /notifications/{id}` takes `{"read": true}`; `PATCH /notifications/read-all` returns `{"updated_count"}` |
 
 Every field is snake_case. Money fields end in `_minor` and are whole numbers of minor units (`234000` is 2,340.00).
 Times are ISO-8601 UTC ending in `Z`. A space's `currency` is one of `INR, USD, EUR, GBP, AED, SGD, AUD, CAD`

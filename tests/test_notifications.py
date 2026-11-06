@@ -89,6 +89,30 @@ def test_list_has_unread_count_and_new_fields(client):
     assert card["created_at"].endswith("Z")
 
 
+def unread_count(client, tokens):
+    response = client.get("/notifications/unread-count", headers=auth(tokens))
+    assert response.status_code == 200, response.text
+    assert set(response.json()) == {"unread_count"}
+    return response.json()["unread_count"]
+
+
+def test_unread_count_endpoint(client):
+    alice = register(client, "alice")
+    bob = register(client, "bob")
+    insert_cards("alice", 3)
+    insert_cards("bob", 2)
+
+    assert unread_count(client, alice) == 3  # only the caller's cards
+    assert unread_count(client, bob) == 2
+    assert unread_count(client, alice) == page(client, alice, limit=1)["unread_count"]  # one source for both
+
+    card_id = page(client, alice)["items"][0]["id"]
+    client.patch(f"/notifications/{card_id}", json={"read": True}, headers=auth(alice))
+    assert unread_count(client, alice) == 2  # read cards drop out
+
+    assert client.get("/notifications/unread-count").status_code == 401
+
+
 def test_read_all(client):
     alice = register(client, "alice")
     bob = register(client, "bob")
@@ -96,13 +120,30 @@ def test_read_all(client):
     insert_cards("bob", 2)
     assert page(client, alice, limit=2)["unread_count"] == 3  # counts every card, not just this page
 
-    response = client.post("/notifications/read-all", headers=auth(alice))
-    assert response.status_code == 204 and response.content == b""
+    response = client.patch("/notifications/read-all", headers=auth(alice))
+    assert response.status_code == 200 and response.json() == {"updated_count": 3}
 
     result = page(client, alice)
     assert result["unread_count"] == 0
     assert all(card["read"] for card in result["items"])
     assert page(client, bob)["unread_count"] == 2  # bob's cards are untouched
+
+
+def test_read_all_with_nothing_unread_updates_zero(client):
+    alice = register(client, "alice")
+    response = client.patch("/notifications/read-all", headers=auth(alice))
+    assert response.status_code == 200 and response.json() == {"updated_count": 0}
+
+    insert_cards("alice", 1)
+    client.patch("/notifications/read-all", headers=auth(alice))
+    again = client.patch("/notifications/read-all", headers=auth(alice))
+    assert again.json() == {"updated_count": 0}  # already-read cards are not counted again
+
+
+def test_read_all_is_patch_only(client):
+    alice = register(client, "alice")
+    response = client.post("/notifications/read-all", headers=auth(alice))
+    assert response.status_code == 405 and error_code(response) == "method_not_allowed"
 
 
 def test_patch_read_field(client):
@@ -161,4 +202,5 @@ def test_someone_elses_card_is_not_found(client):
 def test_notifications_need_a_signed_in_user(client):
     assert client.get("/notifications").status_code == 401
     assert client.patch("/notifications/1", json={"read": True}).status_code == 401
-    assert client.post("/notifications/read-all").status_code == 401
+    assert client.get("/notifications/unread-count").status_code == 401
+    assert client.patch("/notifications/read-all").status_code == 401

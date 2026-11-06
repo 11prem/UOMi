@@ -2,13 +2,19 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.schemas.notification import NotificationList, NotificationOut, NotificationUpdate
+from app.schemas.notification import (
+    MarkAllReadResponse,
+    NotificationList,
+    NotificationOut,
+    NotificationUpdate,
+    UnreadCount,
+)
 from app.services import notification_service
 from app.services.notification_service import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.utils.validators import MAX_ID
@@ -27,13 +33,23 @@ def list_notifications(
     return notification_service.list_notifications(db, current_user.username, before, limit)
 
 
-@router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
+# `/unread-count` and `/read-all` sit above `/{notification_id}` so the path parameter never swallows them.
+@router.get("/unread-count", response_model=UnreadCount)
+def unread_count(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> UnreadCount:
+    """How many cards the signed-in user has not read yet."""
+    return UnreadCount(unread_count=notification_service.get_unread_count(db, current_user.username))
+
+
+@router.patch("/read-all", response_model=MarkAllReadResponse)
 def read_all_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> None:
-    """Mark every card of the signed-in user read."""
-    notification_service.mark_all_read(db, current_user.username)
+) -> MarkAllReadResponse:
+    """Mark every card of the signed-in user read; `updated_count` is how many were unread."""
+    return MarkAllReadResponse(updated_count=notification_service.mark_all_as_read(db, current_user.username))
 
 
 @router.patch("/{notification_id}", response_model=NotificationOut)

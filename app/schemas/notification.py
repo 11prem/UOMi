@@ -31,3 +31,11 @@ class NotificationList(BaseModel):
 
 class NotificationUpdate(BaseModel):
     read: bool
+
+
+class UnreadCount(BaseModel):
+    unread_count: int
+
+
+class MarkAllReadResponse(BaseModel):
+    updated_count: int  # how many cards flipped from unread to read
