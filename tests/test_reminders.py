@@ -118,3 +118,25 @@ def test_fully_settled_pair_gets_no_reminder(client):
         )
 
     assert count == 0
+    
+def test_reminders_sent_on_days_3_5_7_and_10(client):
+    prepare_share(client)
+
+    reminder_dates = [
+        datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 8, 10, 0, tzinfo=timezone.utc),
+        datetime(2026, 11, 11, 10, 0, tzinfo=timezone.utc),
+    ]
+
+    for reminder_time in reminder_dates:
+        with SessionLocal() as db:
+            count = process_due_reminders(db, reminder_time)
+            assert count == 1
+
+    with SessionLocal() as db:
+        reminders = db.scalars(
+            select(Reminder).order_by(Reminder.reminder_day)
+        ).all()
+
+    assert [reminder.reminder_day for reminder in reminders] == [3, 5, 7, 10]
