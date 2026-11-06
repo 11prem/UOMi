@@ -1,6 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { ThemeProvider } from '../../theme/ThemeProvider';
+import { Fab } from '../Fab';
+import { MemberPlate } from '../MemberPlate';
 import { OtpInput } from '../OtpInput';
 import { Stamp } from '../Stamp';
 import { TextField } from '../TextField';
@@ -13,6 +15,10 @@ const inTheme = (ui: React.ReactElement) =>
     </ThemeProvider>,
   );
 const flat = (el: { props: { style?: unknown } }) => StyleSheet.flatten(el.props.style as never) ?? {};
+/** Host elements of one native type (`Image`, `RNSVGSvgView` for an Icon). */
+const hosts = (type: string) => screen.container.queryAll((n) => n.type === type);
+/** The kit Spinner: the ring with its open quarter. */
+const spinners = () => screen.container.queryAll((n) => n.type === 'View' && flat(n).borderRightColor === 'transparent');
 
 describe('Stamp', () => {
   it.each(['AGREED', 'RECEIVED', 'REJECTED', 'NOT RECEIVED'])('%s stays on one line', async (label) => {
@@ -71,5 +77,39 @@ describe('TextField', () => {
     expect(flat(input).borderWidth).toBeUndefined();
     expect(flat(row)).toMatchObject({ borderWidth: 1, minHeight: 52, flexDirection: 'row' });
     expect(row.children[0]).toBe(screen.getByText('IN +91')); // the slot comes first, inside the bordered row
+  });
+});
+
+describe('MemberPlate', () => {
+  it('falls back to the initials when the photo fails to load', async () => {
+    await inTheme(<MemberPlate user={{ name: 'Kabir Rao', plate: 1, avatarUrl: 'file:///cache/gone.jpg' }} />);
+    expect(screen.queryByText('KR', { includeHiddenElements: true })).toBeNull();
+    await fireEvent(hosts('Image')[0], 'error', { nativeEvent: { error: 'file not found' } });
+    expect(screen.getByText('KR', { includeHiddenElements: true })).toBeTruthy();
+    expect(hosts('Image')).toHaveLength(0);
+  });
+});
+
+describe('Fab', () => {
+  it('busy shows the spinner in place of the icon, is disabled and says busy', async () => {
+    const onPress = jest.fn();
+    await inTheme(<Fab icon="check" label="Save expense" onPress={onPress} busy />);
+    const fab = screen.getByRole('button', { name: 'Save expense' });
+    expect(fab).toBeDisabled();
+    expect(fab).toBeBusy();
+    expect(spinners()).toHaveLength(1);
+    expect(hosts('RNSVGSvgView')).toHaveLength(0);
+    await fireEvent.press(fab);
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('not busy shows the icon and presses', async () => {
+    const onPress = jest.fn();
+    await inTheme(<Fab icon="check" label="Save expense" onPress={onPress} />);
+    expect(screen.getByRole('button', { name: 'Save expense' })).not.toBeBusy();
+    expect(spinners()).toHaveLength(0);
+    expect(hosts('RNSVGSvgView')).toHaveLength(1);
+    await fireEvent.press(screen.getByRole('button', { name: 'Save expense' }));
+    expect(onPress).toHaveBeenCalledTimes(1);
   });
 });

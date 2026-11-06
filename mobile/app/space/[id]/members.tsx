@@ -83,8 +83,8 @@ export default function Members() {
     return <Screen header={header}>{body}</Screen>;
   }
 
-  const { space: s, members, balance, activity } = d;
-  const rules = memberRules(s, balance, activity, meId, server);
+  const { space: s, members } = d;
+  const rules = memberRules(d, meId, server);
   const money = (minor: number) => formatMoney(Math.abs(minor), s.currency, { compact: true });
   const subOf = (u: User) => {
     const net = u.id === meId ? 0 : rules.pairWith(u.id);

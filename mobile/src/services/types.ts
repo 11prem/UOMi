@@ -41,7 +41,11 @@ export interface Services {
     /** Sorted, newest activity first. */
     list(): Promise<{ space: Space; balance: SpaceBalance; lastActivity: number }[]>;
     overall(): Promise<OverallLine[]>;
-    get(id: string): Promise<{ space: Space; members: User[]; balance: SpaceBalance; activity: ActivityRow[] }>;
+    /**
+     * `balance` is the viewer's side only. `settledMemberIds` = members whose every pair in the space is 0;
+     * `allSettled` = no open pair anywhere in the space (both count pairs that don't involve the viewer).
+     */
+    get(id: string): Promise<{ space: Space; members: User[]; balance: SpaceBalance; activity: ActivityRow[]; settledMemberIds: string[]; allSettled: boolean }>;
     create(i: { name: string; icon: SpaceIcon; currency: Currency; memberIds: string[] }): Promise<Space>;
     update(id: string, p: Partial<Pick<Space, 'name' | 'icon' | 'currency'>>): Promise<Space>;
     addMembers(id: string, userIds: string[]): Promise<void>;

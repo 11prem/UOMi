@@ -18,9 +18,11 @@ import { useReducedMotion } from '../src/ui/useReducedMotion';
 
 SplashScreen.preventAutoHideAsync();
 
-/** Waits for the saved session (read or failed), then `auth.restore()` before any other service call (specs § 4.1), then the theme. */
+/**
+ * Waits for the saved session (read or failed), then `auth.restore()` before any other service call (specs § 4.1).
+ * The theme is not read here: ThemeProvider keeps it on this phone.
+ */
 function useLaunch(): boolean {
-  const { setPreference } = useTheme();
   const hydrated = useSession((s) => s.hydrated);
   const [done, setDone] = useState(false);
 
@@ -37,11 +39,6 @@ function useLaunch(): boolean {
       } catch {
         // Server unreachable at launch: keep the persisted user; screens show Error with Retry (Review Focus 1).
       }
-      try {
-        setPreference((await services.profile.getPreferences()).theme);
-      } catch {
-        setPreference('system'); // server mode can reject with `network`; that must not stop the app or sign out
-      }
     })().finally(() => setDone(true));
   }, [hydrated]); // once per launch: a later mode switch must not restore (the user signs in again)
 
@@ -56,6 +53,8 @@ function Shell({ fontsReady }: { fontsReady: boolean }) {
   const segments = useSegments();
   useIdleSignOut();
 
+  // The tabs, and the Space page, which draws its own TabBar (`space/[id]` with nothing deeper).
+  const tabBarShown = segments[0] === '(tabs)' || segments.join('/') === 'space/[id]';
   const ready = fontsReady && launched;
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
@@ -91,7 +90,7 @@ function Shell({ fontsReady }: { fontsReady: boolean }) {
           <Stack.Screen name="profile-edit" />
         </Stack.Protected>
       </Stack>
-      <ToastHost aboveTabs={segments[0] === '(tabs)'} />
+      <ToastHost aboveTabs={tabBarShown} />
       <ConfirmHost />
     </View>
   );

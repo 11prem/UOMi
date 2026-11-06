@@ -109,7 +109,7 @@ export default function AddPeople() {
           <OfflineBanner />
         </>
       }
-      fab={<Fab icon="check" label="Create space" onPress={() => create.mutate()} disabled={picked.length === 0 || create.isPending} />}
+      fab={<Fab icon="check" label="Create space" onPress={() => create.mutate()} disabled={picked.length === 0} busy={create.isPending} />}
     >
       <TextField
         label="Find people"

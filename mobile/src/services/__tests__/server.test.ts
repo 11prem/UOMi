@@ -494,7 +494,21 @@ describe('spaces', () => {
 
   it('a space where every pair is zero is settled with no counterparty', async () => {
     const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : { ...GOA, balance_minor: 0, pairwise: [], expenses: [], settlements: [] } }));
-    expect((await svc.spaces.get('2')).balance).toMatchObject({ pairs: [], openBalances: 0, counterpartyName: null, counterpartyCount: 0, settled: true });
+    const d = await svc.spaces.get('2');
+    expect(d.balance).toMatchObject({ pairs: [], openBalances: 0, counterpartyName: null, counterpartyCount: 0, settled: true });
+    expect(d).toMatchObject({ settledMemberIds: ['kabir.r', 'arun.n', 'swetha.i', 'priya.m'], allSettled: true });
+  });
+
+  it('who is settled reads every pair in the space, the viewer’s or not', async () => {
+    // The viewer is square with everyone, but Swetha owes Arun: neither of them is settled, and the space isn't.
+    const pairwise = [{ debtor: SWETHA, creditor: ARUN, amount_minor: 10000 }];
+    const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : { ...GOA, balance_minor: 0, pairwise } }));
+    const d = await svc.spaces.get('2');
+    expect(d.balance.settled).toBe(true);
+    expect(d).toMatchObject({ settledMemberIds: ['kabir.r', 'priya.m'], allSettled: false });
+
+    const goa = await make((c) => ({ body: c.path === '/users/me' ? ME : GOA })).svc.spaces.get('2');
+    expect(goa).toMatchObject({ settledMemberIds: [], allSettled: false }); // all four are in an open pair
   });
 
   it('create posts the usernames and returns the new space', async () => {

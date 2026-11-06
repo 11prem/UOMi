@@ -17,9 +17,8 @@ export type MemberSheetProps = {
 };
 
 /**
- * The ⋯ menu on a member row (specs § 10): the owner's Remove. The UI can only see the viewer's own pair with that
- * member, so Remove is disabled with "Settle up first" while that pair is open; the service enforces the full rule
- * (every pairwise balance of the member is 0) and its refusal is toasted.
+ * The ⋯ menu on a member row (specs § 10): the owner's Remove, disabled with "Settle up first" while any pairwise balance
+ * of the member is open (with anyone, not only the viewer); the service enforces the same rule and its refusal is toasted.
  */
 export function MemberSheet({ visible, member, sub, canRemove, onRemove, onClose }: MemberSheetProps) {
   const { colors, type, space } = useTheme();
@@ -33,7 +32,7 @@ export function MemberSheet({ visible, member, sub, canRemove, onRemove, onClose
           </View>
           <Button variant="danger" icon="x" label="Remove from space" onPress={onRemove} disabled={!canRemove} />
           {!canRemove && (
-            <Text style={[type.label, { color: colors.ink2 }]}>Settle up first — you and {firstName(member.name)} have an open balance.</Text>
+            <Text style={[type.label, { color: colors.ink2 }]}>Settle up first — {firstName(member.name)} has open balances here.</Text>
           )}
         </View>
       )}

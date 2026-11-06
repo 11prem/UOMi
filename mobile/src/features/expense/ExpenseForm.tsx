@@ -144,7 +144,7 @@ export function ExpenseForm({ title, space: s, members, meId, expense, onSubmit,
           <OfflineBanner />
         </>
       }
-      fab={<Fab icon="check" label="Save expense" onPress={save} disabled={!valid || saving} />}
+      fab={<Fab icon="check" label="Save expense" onPress={save} disabled={!valid} busy={saving} />}
     >
       <View style={{ gap: space.s4, paddingTop: space.s1 }}>
         <TextField

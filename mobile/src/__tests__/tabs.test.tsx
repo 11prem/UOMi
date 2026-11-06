@@ -1,4 +1,5 @@
 import path from 'path';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
 import { renderRouter, screen } from 'expo-router/testing-library';
 import { router } from 'expo-router';
@@ -38,6 +39,7 @@ const KABIR: User = { id: 'u_kabir', username: 'kabir.r', name: 'Kabir Rao', pho
 beforeEach(async () => {
   queryClient.clear();
   useSession.setState({ mode: 'demo', serverUrl: '', user: null, landing: '/welcome' });
+  await AsyncStorage.removeItem('uomi.theme.v1'); // the theme picked in one test is kept on the phone: start each following the phone
   const s = currentServices();
   await s.debug!.resetDemoData();
   await s.debug!.setSimulateErrors(false);
@@ -270,7 +272,7 @@ describe('Profile', () => {
     await waitFor(() => expect(screen.getByRole('header', { name: 'Profile' })).toHaveStyle({ color: tokens.dark.ink }));
     expect(screen.getByRole('radio', { name: 'Dark' })).toBeChecked();
     expect(screen.getByText('Dark')).toBeTruthy(); // the row's caption
-    expect((await currentServices().profile.getPreferences()).theme).toBe('dark'); // kept for the next launch
+    expect((await currentServices().profile.getPreferences()).theme).toBe('dark'); // the demo keeps a copy; the phone's own copy is what launches use
     await fireEvent.press(screen.getByRole('radio', { name: 'Light' }));
     await waitFor(() => expect(screen.getByRole('header', { name: 'Profile' })).toHaveStyle({ color: tokens.light.ink }));
   });

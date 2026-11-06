@@ -142,7 +142,7 @@ export default function SettleUp() {
           <OfflineBanner />
         </>
       }
-      fab={payee && !server && <Fab icon="check" label="Record payment" onPress={record} disabled={!!error || saving} />}
+      fab={payee && !server && <Fab icon="check" label="Record payment" onPress={record} disabled={!!error} busy={saving} />}
     >
       {body}
     </Screen>

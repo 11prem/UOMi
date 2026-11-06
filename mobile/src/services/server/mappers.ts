@@ -211,7 +211,11 @@ export function toSpaceDetail(d: SpaceDetailDto, me: User) {
   );
   // Newest first; the sort is stable, so rows of the same day keep the server's order (newest id first).
   const activity = [...expenses, ...payments].sort((a, b) => b.date - a.date);
-  return { space, members, balance, activity };
+  // Every pair in the space, the viewer's or not: who still owes or is owed anyone.
+  const openPairs = d.pairwise.filter((p) => p.amount_minor !== 0);
+  const inOpenPair = new Set(openPairs.flatMap((p) => [p.debtor.username, p.creditor.username]));
+  const settledMemberIds = space.memberIds.filter((m) => !inOpenPair.has(m));
+  return { space, members, balance, activity, settledMemberIds, allSettled: openPairs.length === 0 };
 }
 
 // ---- Notifications ----

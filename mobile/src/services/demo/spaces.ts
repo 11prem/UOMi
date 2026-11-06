@@ -41,6 +41,8 @@ export function makeSpaces(c: Ctx): Services['spaces'] {
           members: space.memberIds.map((m) => c.user(m)).filter((u): u is User => !!u),
           balance: c.bal(space, me.id),
           activity: [...expenses.map((e) => c.expenseRow(e, me.id)), ...settlements.map(c.paymentRow)].sort((a, b) => b.date - a.date),
+          settledMemberIds: space.memberIds.filter((m) => c.isSettled(space, m)),
+          allSettled: c.isSettled(space),
         };
       }),
 

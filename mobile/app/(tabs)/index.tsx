@@ -46,14 +46,17 @@ export default function Home() {
 
       <Press
         onPress={() => router.navigate('/notifications')}
+        accessibilityRole="header" // the section's heading, still pressable (it opens Notifications)
         accessibilityLabel={n ? `Notifications, ${n} unread notification${n === 1 ? '' : 's'}` : 'Notifications'}
         scaleTo={1}
         style={{ flexDirection: 'row', alignItems: 'center', gap: space.s2, alignSelf: 'flex-start', minHeight: size.target, marginTop: space.s2, marginBottom: space.s2 }}
       >
         <Text style={[type.title, { color: colors.ink }]}>Notifications</Text>
         {n > 0 && (
-          <View style={{ minWidth: size.badge, height: size.badge, borderRadius: radius.pill, backgroundColor: colors.badge, paddingHorizontal: space.s2 - 2, justifyContent: 'center' }}>
-            <Text style={[type.label, { color: colors.onBadge, textAlign: 'center' }]}>{n}</Text>
+          <View style={{ minWidth: size.badge, minHeight: size.badge, borderRadius: radius.pill, backgroundColor: colors.badge, paddingHorizontal: space.s2 - 2, justifyContent: 'center' }}>
+            <Text maxFontSizeMultiplier={1.5} style={[type.label, { color: colors.onBadge, textAlign: 'center' }]}>
+              {n}
+            </Text>
           </View>
         )}
       </Press>

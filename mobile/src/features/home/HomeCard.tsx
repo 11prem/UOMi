@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
@@ -25,7 +25,8 @@ const subOf = (n: AppNotification) => (n.type === 'space_deleted' ? 'Everyone wa
  * The Home notification card (specs § 5.1–5.2): the latest notification that needs an answer, as a carbon-copied bill
  * with ✕ / ✓; otherwise the latest one, plain; otherwise "You’re all caught up". `notifications` is newest first.
  * An answer goes to the service first, so a refusal (server mode's `not_on_server`, offline) only shows a toast;
- * once it succeeds the copies peel (✓) or tear (✕) under a landing stamp, then the queries refresh and the next card shows.
+ * once it succeeds the toast and the refresh happen at once, and the copies peel (✓) or tear (✕) under a landing stamp;
+ * the card keeps the answered bill until the peel is over, then the next card shows.
  */
 export function HomeCard({ notifications }: { notifications: AppNotification[] }) {
   const { colors, type, space } = useTheme();
@@ -33,6 +34,7 @@ export function HomeCard({ notifications }: { notifications: AppNotification[] }
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [leaving, setLeaving] = useState<{ n: AppNotification; yes: boolean } | null>(null);
+  const refreshing = useRef<Promise<unknown>>(Promise.resolve());
   const n = leaving?.n ?? notifications.find((x) => x.needsAnswer) ?? notifications[0];
   const bill = { flex: 1, minHeight: STRIP.height } as const;
 
@@ -62,20 +64,22 @@ export function HomeCard({ notifications }: { notifications: AppNotification[] }
     try {
       if (pay) await (yes ? services.settlements.confirm(n.refId) : services.settlements.reject(n.refId));
       else await (yes ? services.expenses.acceptShare(n.refId) : services.expenses.rejectShare(n.refId));
-      setLeaving({ n, yes });
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Something went wrong. Your data is safe.');
-      setBusy(false);
+      return setBusy(false);
     }
-  }
-
-  async function gone(yes: boolean) {
+    // Now, not when the peel ends: Back or a tab switch mid-peel can unmount this before `gone` runs, and the toast and refresh would be lost.
     toast(
       pay
         ? yes ? 'Payment confirmed — balance updated' : 'Payment marked as not received'
         : yes ? 'Share accepted — balance updated' : 'Share rejected — the person who added it will be told',
     );
-    await queryClient.invalidateQueries(); // an answer moves the badge, the balances and every list that shows them
+    refreshing.current = queryClient.invalidateQueries(); // an answer moves the badge, the balances and every list that shows them
+    setLeaving({ n, yes });
+  }
+
+  async function gone() {
+    await refreshing.current; // drop the answered bill only once the refreshed list is in, so it can't flash back
     setLeaving(null);
     setBusy(false);
   }
@@ -85,7 +89,7 @@ export function HomeCard({ notifications }: { notifications: AppNotification[] }
       key={n.id} // fresh copies for the next card
       kind={pay ? 'payment' : 'share'}
       leaving={leaving ? (leaving.yes ? 'peel' : 'tear') : null}
-      onGone={() => gone(leaving!.yes)}
+      onGone={gone}
       style={{ flex: 1 }}
     >
       <Sheet perf padded style={bill}>

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Text, View } from 'react-native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { CURRENCY_INFO } from '../../domain/money';
@@ -58,13 +58,13 @@ function SymbolTile({ symbol }: { symbol: string }) {
  * Default currency, the Notifications switch and the Theme (specs § 13). `prefs` is what is stored (demo mode, which
  * renders this only once it has loaded: a write would otherwise replace what is stored with the defaults); undefined in
  * server mode. The currency and notifications are saved through the service, so they are locked in server mode. The theme
- * is the phone's own: it changes the screen at once and is saved where the service can, and stays on this phone where it can't.
+ * is the phone's own (ThemeProvider keeps it on this phone in both modes): it changes the screen at once, and is also sent to
+ * the service where it can be stored.
  */
 export function SettingsSection({ prefs, server }: { prefs: Preferences | undefined; server: boolean }) {
-  const { scheme, setPreference } = useTheme();
+  const { scheme, preference: theme, setPreference } = useTheme();
   const services = useServices();
   const queryClient = useQueryClient();
-  const [pickedTheme, setPickedTheme] = useState<ThemePreference | null>(null);
   const save = useMutation({
     mutationFn: (p: Preferences) => services.profile.setPreferences(p),
     onSettled: () => queryClient.invalidateQueries({ queryKey: qk.preferences }), // invalidate: the next read is the stored truth
@@ -72,19 +72,16 @@ export function SettingsSection({ prefs, server }: { prefs: Preferences | undefi
 
   const shown = save.isPending ? save.variables : (prefs ?? DEFAULTS); // the switch moves when it is tapped, not when the write returns
   const locked = server;
-  const theme = pickedTheme ?? shown.theme;
   const reason = server ? 'Not available on this server yet' : undefined;
 
   function pickTheme(next: ThemePreference) {
     const before = theme;
-    setPickedTheme(next);
     setPreference(next);
     save.mutate(
       { ...shown, theme: next },
       {
         onError: (e) => {
           if (isNotOnServer(e)) return; // nothing to save it to: the theme stays on this phone
-          setPickedTheme(before);
           setPreference(before);
           toast(e.message);
         },
