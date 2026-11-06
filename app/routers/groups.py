@@ -1,6 +1,8 @@
 """Space endpoints: Home page list, create-space flow (Group Name + Add People), Group page."""
 
-from fastapi import APIRouter, Depends, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -8,6 +10,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.group import SpaceCreate, SpaceDetailOut, SpaceListOut
 from app.services import group_service
+from app.utils.validators import MAX_ID
 
 router = APIRouter(prefix="/spaces", tags=["spaces"])
 
@@ -33,7 +36,7 @@ def create_space(
 
 @router.get("/{space_id}", response_model=SpaceDetailOut)
 def get_space(
-    space_id: int,
+    space_id: Annotated[int, Path(ge=1, le=MAX_ID)],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SpaceDetailOut:

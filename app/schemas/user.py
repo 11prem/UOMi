@@ -1,6 +1,6 @@
 """Request/response shapes for sign up, sign in, sessions, forgot password and people search."""
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from app.utils.validators import (
     clean_name,
@@ -44,10 +44,14 @@ class RegisterRequest(BaseModel):
     def check_password(cls, v: str) -> str:
         return validate_password_strength(v)
 
-    @model_validator(mode="after")
-    def check_passwords_match(self) -> "RegisterRequest":
-        passwords_match(self.password, self.confirm_password)
-        return self
+    @field_validator("confirm_password")
+    @classmethod
+    def check_passwords_match(cls, v: str, info: ValidationInfo) -> str:
+        # On the confirm field, so the error names `confirm_password`. `password` is missing from
+        # info.data when it failed its own check; then there is nothing to compare.
+        if "password" in info.data:
+            passwords_match(info.data["password"], v)
+        return v
 
 
 class LoginRequest(BaseModel):
@@ -137,10 +141,12 @@ class ResetRequest(BaseModel):
     def check_password(cls, v: str) -> str:
         return validate_password_strength(v)
 
-    @model_validator(mode="after")
-    def check_passwords_match(self) -> "ResetRequest":
-        passwords_match(self.new_password, self.confirm_password)
-        return self
+    @field_validator("confirm_password")
+    @classmethod
+    def check_passwords_match(cls, v: str, info: ValidationInfo) -> str:
+        if "new_password" in info.data:
+            passwords_match(info.data["new_password"], v)
+        return v
 
 
 # ---------------------------------------------------------------------------

@@ -3,8 +3,10 @@
 Every timeout in the app lives here, so changing one is a one-line edit in `.env`.
 """
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Annotated
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -14,6 +16,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "UOMi"
     DEBUG: bool = False
     DATABASE_URL: str = "sqlite:///./uomi.db"  # PostgreSQL: postgresql+psycopg://USER:PASSWORD@HOST/DBNAME
+
+    # Browser origins allowed to call the API (the Expo web build). The env value is comma separated.
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:8081", "http://127.0.0.1:8081"]
 
     # --- Secrets ---
     SECRET_KEY: str = Field(min_length=32)  # required, no default on purpose
@@ -49,6 +54,13 @@ class Settings(BaseSettings):
     # --- SMS ---
     # "console" writes the message to the server log (development). Real providers plug in later.
     SMS_BACKEND: str = "console"
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def split_origins(cls, value):
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
 
 settings = Settings()

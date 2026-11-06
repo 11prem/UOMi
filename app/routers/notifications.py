@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -11,13 +11,14 @@ from app.models.user import User
 from app.schemas.notification import NotificationList, NotificationOut, NotificationUpdate
 from app.services import notification_service
 from app.services.notification_service import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.utils.validators import MAX_ID
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
 @router.get("", response_model=NotificationList)
 def list_notifications(
-    before: Annotated[int | None, Query(ge=1, description="Id of the last card on the previous page")] = None,
+    before: Annotated[int | None, Query(ge=1, le=MAX_ID, description="Id of the last card on the previous page")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -37,7 +38,7 @@ def read_all_notifications(
 
 @router.patch("/{notification_id}", response_model=NotificationOut)
 def update_notification(
-    notification_id: int,
+    notification_id: Annotated[int, Path(ge=1, le=MAX_ID)],
     data: NotificationUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

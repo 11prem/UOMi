@@ -7,6 +7,8 @@ from app.config import settings
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_BYTES = 72  # bcrypt cannot handle more than this
 MIN_FULL_PHONE_DIGITS = 10  # fewer digits than this is treated as a half-typed number in search
+MAX_ID = 2**31 - 1  # the largest id a path/query parameter may carry; anything bigger overflows the database
+DEFAULT_NATIONAL_DIGITS = 10  # length of a national number in the default country (India)
 
 _USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,30}$")
 _E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
@@ -33,13 +35,19 @@ def normalize_phone(phone: str) -> str:
     """Return the number in E.164 form (+919876543210).
 
     Spaces, dashes and brackets are dropped. A number without a '+' is treated as a national
-    number and gets DEFAULT_COUNTRY_CODE.
+    number and gets DEFAULT_COUNTRY_CODE, unless it already starts with that code at full length
+    ("91 98765 43210" is 12 digits, so it is +919876543210, not +91919876543210).
     """
     cleaned = re.sub(r"[\s\-().]", "", phone)
     if cleaned.startswith("00"):
         cleaned = "+" + cleaned[2:]
     if not cleaned.startswith("+"):
-        cleaned = settings.DEFAULT_COUNTRY_CODE + cleaned.lstrip("0")
+        national = cleaned.lstrip("0")
+        dial_code = settings.DEFAULT_COUNTRY_CODE.lstrip("+")
+        if national.startswith(dial_code) and len(national) == len(dial_code) + DEFAULT_NATIONAL_DIGITS:
+            cleaned = "+" + national
+        else:
+            cleaned = settings.DEFAULT_COUNTRY_CODE + national
     if not _E164_RE.fullmatch(cleaned):
         raise ValueError("Enter a valid phone number")
     return cleaned

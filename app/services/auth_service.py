@@ -12,7 +12,7 @@ import logging
 import math
 from datetime import timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -210,15 +210,28 @@ def verify_reset_otp(db: Session, phone: str, code: str) -> VerifyOTPResponse:
         .order_by(PasswordReset.id.desc())
         .limit(1)
     )
-    if row is None or row.expires_at <= now or row.attempts >= settings.OTP_MAX_ATTEMPTS:
+    if row is None:
+        raise wrong_or_expired
+
+    # Count this guess before looking at it, in one UPDATE, so parallel guesses cannot share an
+    # attempt number. No row updated: the code is dead (used up, expired or out of guesses).
+    counted = db.execute(
+        update(PasswordReset)
+        .where(
+            PasswordReset.id == row.id,
+            PasswordReset.attempts < settings.OTP_MAX_ATTEMPTS,
+            PasswordReset.used_at.is_(None),
+            PasswordReset.verified_at.is_(None),
+            PasswordReset.expires_at > now,
+        )
+        .values(attempts=PasswordReset.attempts + 1)
+    )
+    db.commit()
+    if counted.rowcount == 0:
         raise wrong_or_expired
 
     code_matches = security.safe_equal(row.code_hash, security.hash_otp(phone, code))
     if not code_matches or row.username is None:
-        row.attempts += 1
-        if row.attempts >= settings.OTP_MAX_ATTEMPTS:
-            row.expires_at = now  # too many wrong guesses: the code is dead
-        db.commit()
         raise wrong_or_expired
 
     reset_token = security.new_opaque_token()

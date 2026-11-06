@@ -11,7 +11,7 @@ from app.models.group import Space
 from app.models.payment import Settlement, SettlementStatus
 from app.models.user import User
 from app.services import balance_service
-from tests.helpers import add_expense, add_settlement, auth, create_space, db_exec, register
+from tests.helpers import add_expense, add_settlement, auth, create_space, db_exec, error_code, register
 
 ACCEPTED = ShareStatus.ACCEPTED
 PENDING = ShareStatus.PENDING
@@ -314,7 +314,10 @@ def test_create_space_currency(client, users):
     assert card(client, users["alice"], space_id)["currency"] == "USD"
     assert detail(client, users["alice"], space_id)["currency"] == "USD"
 
-    assert create(currency="XYZ").status_code == 422  # Task 4 adds the validation_error code
+    unsupported = create(currency="XYZ")
+    assert unsupported.status_code == 422
+    assert error_code(unsupported) == "validation_error"
+    assert unsupported.json()["detail"]["fields"][0]["field"] == "currency"
     assert create(currency="usd").status_code == 422  # codes are upper case
     assert create(currency=None).status_code == 201  # null is the same as missing
 
