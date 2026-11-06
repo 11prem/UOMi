@@ -57,10 +57,11 @@ def create_space(db: Session, creator: User, data: SpaceCreate) -> Space:
         db.add(SpaceMember(space_id=space.id, username=username, position=position))
         notification_service.create_notification(
             db,
-            username,
-            NotificationType.SPACE_ADDED,
-            message=f"{creator.name} added you to {space.name}.",
+            username=username,
+            type=NotificationType.SPACE_ADDED,
+            message=f"{creator.name} added you to ‘{space.name}’",
             space_id=space.id,
+            space_name=space.name,
         )
     db.commit()
     return space

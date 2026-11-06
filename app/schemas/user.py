@@ -157,6 +157,13 @@ class UserSummary(BaseModel):
     name: str
 
 
+class UserMe(UserSummary):
+    """GET /users/me: the signed-in person's own profile, so the phone is theirs to see."""
+
+    phone: str  # E.164
+    currency: str  # their default currency
+
+
 class UserSearchResult(UserSummary):
     """A row on the Add People page."""
 

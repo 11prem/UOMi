@@ -1,6 +1,6 @@
 """Notification cards: creating them, listing them page by page, and marking them read."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.notification import Notification, NotificationType
@@ -13,11 +13,14 @@ MAX_PAGE_SIZE = 50
 
 def create_notification(
     db: Session,
+    *,
     username: str,
-    notification_type: NotificationType,
+    type: NotificationType,
     message: str,
     space_id: int | None = None,
+    space_name: str | None = None,
     ref_id: int | None = None,
+    needs_answer: bool = False,
 ) -> Notification:
     """Add a card for `username` to the session. Does NOT commit.
 
@@ -26,27 +29,15 @@ def create_notification(
     """
     notification = Notification(
         username=username,
-        type=notification_type,
+        type=type,
         message=message,
         space_id=space_id,
+        space_name=space_name,
         ref_id=ref_id,
+        needs_answer=needs_answer,
     )
     db.add(notification)
     return notification
-
-
-def _out(notification: Notification) -> NotificationOut:
-    """The API shape is unchanged for now: the old title and body are both the message."""
-    return NotificationOut(
-        id=notification.id,
-        type=notification.type,
-        title=notification.message,
-        body=notification.message,
-        space_id=notification.space_id,
-        ref_id=notification.ref_id,
-        is_read=notification.read,
-        created_at=notification.created_at,
-    )
 
 
 def list_notifications(db: Session, username: str, before: int | None, limit: int) -> NotificationList:
@@ -57,20 +48,32 @@ def list_notifications(db: Session, username: str, before: int | None, limit: in
     rows = db.scalars(stmt.order_by(Notification.id.desc()).limit(limit + 1)).all()
     page = rows[:limit]
     has_more = len(rows) > limit
+    unread_count = db.scalar(
+        select(func.count()).where(Notification.username == username, Notification.read.is_(False))
+    )
     return NotificationList(
-        items=[_out(row) for row in page],
+        items=[NotificationOut.model_validate(row) for row in page],
         next_before=page[-1].id if has_more else None,
+        unread_count=unread_count,
     )
 
 
-def set_read(db: Session, username: str, notification_id: int, is_read: bool) -> NotificationOut:
+def set_read(db: Session, username: str, notification_id: int, read: bool) -> NotificationOut:
     """Mark a card read or unread. Someone else's card is reported as not found."""
     notification = db.scalar(
         select(Notification).where(Notification.id == notification_id, Notification.username == username)
     )
     if notification is None:
         raise api_error(404, "notification_not_found", "Notification not found.")
-    notification.read = is_read
+    notification.read = read
     db.commit()
     db.refresh(notification)
-    return _out(notification)
+    return NotificationOut.model_validate(notification)
+
+
+def mark_all_read(db: Session, username: str) -> None:
+    """Notifications page, "mark all read": every unread card of the caller."""
+    db.execute(
+        update(Notification).where(Notification.username == username, Notification.read.is_(False)).values(read=True)
+    )
+    db.commit()

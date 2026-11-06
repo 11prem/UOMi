@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -26,6 +26,15 @@ def list_notifications(
     return notification_service.list_notifications(db, current_user.username, before, limit)
 
 
+@router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
+def read_all_notifications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Mark every card of the signed-in user read."""
+    notification_service.mark_all_read(db, current_user.username)
+
+
 @router.patch("/{notification_id}", response_model=NotificationOut)
 def update_notification(
     notification_id: int,
@@ -34,4 +43,4 @@ def update_notification(
     current_user: User = Depends(get_current_user),
 ) -> NotificationOut:
     """Mark a card read (or unread)."""
-    return notification_service.set_read(db, current_user.username, notification_id, data.is_read)
+    return notification_service.set_read(db, current_user.username, notification_id, data.read)

@@ -46,7 +46,8 @@ def test_create_space_adds_the_people_in_order_and_notifies_them(client, users):
     assert len(cards) == 1
     assert cards[0]["type"] == "space_added"
     assert cards[0]["space_id"] == space["id"]
-    assert "Alice added you to Goa Trip" in cards[0]["body"]
+    assert cards[0]["message"] == "Alice added you to ‘Goa Trip’"
+    assert cards[0]["space_name"] == "Goa Trip"
     assert client.get("/notifications", headers=auth(users["alice"])).json()["items"] == []
 
 

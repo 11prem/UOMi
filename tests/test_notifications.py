@@ -1,8 +1,11 @@
-"""The notification cards: paging and marking them read."""
+"""The notification cards: paging, unread count, and marking them read."""
+
+from sqlalchemy import delete
 
 from app.database import SessionLocal
+from app.models.group import Space
 from app.models.notification import Notification, NotificationType
-from tests.helpers import auth, error_code, register
+from tests.helpers import auth, create_space, db_exec, error_code, register
 
 
 def insert_cards(username: str, count: int) -> None:
@@ -25,14 +28,14 @@ def test_pages_run_newest_first_until_the_last_one(client):
     insert_cards("alice", 25)
 
     first = page(client, alice, limit=10)
-    assert [c["title"] for c in first["items"]] == [f"Card {n}" for n in range(25, 15, -1)]
+    assert [c["message"] for c in first["items"]] == [f"Card {n}" for n in range(25, 15, -1)]
     assert first["next_before"] == first["items"][-1]["id"]
 
     second = page(client, alice, limit=10, before=first["next_before"])
-    assert [c["title"] for c in second["items"]] == [f"Card {n}" for n in range(15, 5, -1)]
+    assert [c["message"] for c in second["items"]] == [f"Card {n}" for n in range(15, 5, -1)]
 
     third = page(client, alice, limit=10, before=second["next_before"])
-    assert [c["title"] for c in third["items"]] == [f"Card {n}" for n in range(5, 0, -1)]
+    assert [c["message"] for c in third["items"]] == [f"Card {n}" for n in range(5, 0, -1)]
     assert third["next_before"] is None  # that was the last page
 
 
@@ -64,18 +67,84 @@ def test_you_only_see_your_own_cards(client):
     assert page(client, bob)["items"] == []
 
 
-def test_mark_a_card_read_and_unread(client):
+def test_list_has_unread_count_and_new_fields(client):
+    alice = register(client, "alice")
+    bob = register(client, "bob")
+    space = create_space(client, alice, "Goa Trip", ["bob"])
+
+    result = page(client, bob)
+    assert set(result) == {"items", "next_before", "unread_count"}
+    assert result["unread_count"] == 1
+
+    card = result["items"][0]
+    # exactly these keys: no title, body or is_read any more
+    assert set(card) == {
+        "id", "type", "message", "space_id", "space_name", "ref_id", "needs_answer", "read", "created_at",
+    }  # fmt: skip
+    assert card["type"] == "space_added"
+    assert card["message"] == "Alice added you to ‘Goa Trip’"
+    assert (card["space_id"], card["space_name"], card["ref_id"]) == (space["id"], "Goa Trip", None)
+    assert card["needs_answer"] is False
+    assert card["read"] is False
+    assert card["created_at"].endswith("Z")
+
+
+def test_read_all(client):
+    alice = register(client, "alice")
+    bob = register(client, "bob")
+    insert_cards("alice", 3)
+    insert_cards("bob", 2)
+    assert page(client, alice, limit=2)["unread_count"] == 3  # counts every card, not just this page
+
+    response = client.post("/notifications/read-all", headers=auth(alice))
+    assert response.status_code == 204 and response.content == b""
+
+    result = page(client, alice)
+    assert result["unread_count"] == 0
+    assert all(card["read"] for card in result["items"])
+    assert page(client, bob)["unread_count"] == 2  # bob's cards are untouched
+
+
+def test_patch_read_field(client):
     alice = register(client, "alice")
     insert_cards("alice", 1)
-    card = page(client, alice)["items"][0]
-    assert card["is_read"] is False
+    card_id = page(client, alice)["items"][0]["id"]
 
-    read = client.patch(f"/notifications/{card['id']}", json={"is_read": True}, headers=auth(alice))
-    assert read.status_code == 200 and read.json()["is_read"] is True
-    assert page(client, alice)["items"][0]["is_read"] is True
+    response = client.patch(f"/notifications/{card_id}", json={"read": True}, headers=auth(alice))
+    assert response.status_code == 200 and response.json()["read"] is True
+    assert page(client, alice)["unread_count"] == 0
 
-    unread = client.patch(f"/notifications/{card['id']}", json={"is_read": False}, headers=auth(alice))
-    assert unread.json()["is_read"] is False
+    # the old field name is gone: `read` is required
+    old = client.patch(f"/notifications/{card_id}", json={"is_read": False}, headers=auth(alice))
+    assert old.status_code == 422
+    assert page(client, alice)["items"][0]["read"] is True
+
+    unread = client.patch(f"/notifications/{card_id}", json={"read": False}, headers=auth(alice))
+    assert unread.json()["read"] is False
+
+
+def test_space_deleted_notification_survives_space_delete(client):
+    alice = register(client, "alice")
+    bob = register(client, "bob")
+    space = create_space(client, alice, "Goa Trip", ["bob"])
+    with SessionLocal() as session:
+        session.add(
+            Notification(
+                username="bob",
+                type=NotificationType.SPACE_DELETED,
+                message="Alice deleted Goa Trip",
+                space_id=space["id"],
+                space_name="Goa Trip",
+            )
+        )
+        session.commit()
+
+    db_exec(delete(Space).where(Space.id == space["id"]))
+
+    cards = {card["type"]: card for card in page(client, bob)["items"]}
+    assert set(cards) == {"space_added", "space_deleted"}  # both cards outlive the space
+    assert cards["space_deleted"]["space_id"] is None
+    assert cards["space_deleted"]["space_name"] == "Goa Trip"
 
 
 def test_someone_elses_card_is_not_found(client):
@@ -84,11 +153,12 @@ def test_someone_elses_card_is_not_found(client):
     insert_cards("alice", 1)
     card_id = page(client, alice)["items"][0]["id"]
 
-    response = client.patch(f"/notifications/{card_id}", json={"is_read": True}, headers=auth(bob))
+    response = client.patch(f"/notifications/{card_id}", json={"read": True}, headers=auth(bob))
     assert response.status_code == 404 and error_code(response) == "notification_not_found"
-    assert page(client, alice)["items"][0]["is_read"] is False  # untouched
+    assert page(client, alice)["items"][0]["read"] is False  # untouched
 
 
 def test_notifications_need_a_signed_in_user(client):
     assert client.get("/notifications").status_code == 401
-    assert client.patch("/notifications/1", json={"is_read": True}).status_code == 401
+    assert client.patch("/notifications/1", json={"read": True}).status_code == 401
+    assert client.post("/notifications/read-all").status_code == 401
