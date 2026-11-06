@@ -135,12 +135,32 @@ describe('seed', () => {
     expect(activity.find((a) => a.id === 'e_shack')).toMatchObject({
       kind: 'expense',
       paidByName: 'Swetha Iyer',
-      myPartMinor: 70000,
+      myPartMinor: -70000, // Swetha paid, Kabir's share is ₹700: he owes it (disputed rows keep the same rule)
       myResponse: 'accepted',
       disputed: true,
     });
+    expect(activity.find((a) => a.id === 'e_villa')).toMatchObject({ paidById: 'u_kabir', myPartMinor: 1840000 - 368000 }); // Kabir paid: the others owe him the rest
     expect(activity.find((a) => a.id === 'st_pr')).toMatchObject({ kind: 'payment', fromName: 'Priya Menon', toName: 'Kabir Rao', status: 'pending' });
-    expect((await svc.spaces.get('sp_flat')).activity.find((a) => a.id === 'e_toit')).toMatchObject({ myPartMinor: 48000, myResponse: 'pending' });
+    const flat = (await svc.spaces.get('sp_flat')).activity;
+    expect(flat.find((a) => a.id === 'e_toit')).toMatchObject({ myPartMinor: -48000, myResponse: 'pending' }); // Swetha paid
+    expect(flat.find((a) => a.id === 'e_wifi')).toMatchObject({ paidById: 'u_kabir', myPartMinor: 78666, myResponse: 'accepted' }); // 118000 − his own 39334
+  });
+
+  it('my part is signed from the viewer’s side, and null when not involved', async () => {
+    const { svc } = make();
+    const space = await tripWithSwetha(svc); // signs in as Kabir
+    const paidForSwetha = await svc.expenses.create(expenseInput(space.id, 'u_kabir', 30000, ['u_swetha'])); // Kabir pays and has no share
+    const part = async (id: string) => (await svc.spaces.get(space.id)).activity.find((a) => a.id === id);
+    expect(await part(paidForSwetha.id)).toMatchObject({ myPartMinor: 30000, myResponse: null }); // all of it is owed to him
+    await actAs(svc, 'u_swetha');
+    expect(await part(paidForSwetha.id)).toMatchObject({ myPartMinor: -30000, myResponse: 'pending' });
+
+    await actAs(svc, 'u_arun'); // Sunday cricket: Arun paid the ground (80000, own share 40000); Kabir paid the ball and split it with Rohan
+    const cricket = (await svc.spaces.get('sp_cricket')).activity;
+    expect(cricket.find((a) => a.id === 'e_ground')).toMatchObject({ myPartMinor: 40000 });
+    expect(cricket.find((a) => a.id === 'e_ball')).toMatchObject({ myPartMinor: null, myResponse: null }); // not involved
+    const rows = await svc.transactions.list({ kind: 'expenses', spaceId: 'sp_cricket' }); // the Transactions list follows the same rule
+    expect(rows.map((r) => [r.id, r.kind === 'expense' ? r.myPartMinor : 'payment'])).toEqual([['e_ball', null], ['e_ground', 40000]]);
   });
 
   it('calls other than auth need a signed-in user', async () => {

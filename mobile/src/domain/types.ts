@@ -130,7 +130,7 @@ export type ActivityRow =
       amountMinor: number;
       paidById: string;
       paidByName: string;
-      myPartMinor: number | null;
+      myPartMinor: number | null; // signed from the viewer's side: + what the others owe them (they paid), − their own share (someone else paid), null = not involved
       myResponse: ShareResponse | null;
       disputed: boolean;
     }

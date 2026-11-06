@@ -102,7 +102,8 @@ export function createContext(storage: Storage, opts: DemoOptions = {}) {
       amountMinor: e.amountMinor,
       paidById: e.paidBy,
       paidByName: nameOf(e.paidBy),
-      myPartMinor: mine ? mine.amountMinor : null,
+      // Signed from the viewer's side: + what the others owe them (they paid), − their own share (someone else paid), null if not involved.
+      myPartMinor: e.paidBy === viewerId ? e.amountMinor - (mine?.amountMinor ?? 0) : mine ? 0 - mine.amountMinor : null, // 0 − x: never −0
       myResponse: mine ? mine.response : null,
       disputed: e.shares.some((x) => x.response === 'rejected'),
     };
