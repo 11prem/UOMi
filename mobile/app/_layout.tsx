@@ -1,24 +1,99 @@
-import { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { View } from 'react-native';
+import { Stack, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
 import { fonts } from '../src/theme/type';
+import { queryClient } from '../src/services/queries';
+import { currentServices } from '../src/services/useServices';
+import { useIdleSignOut } from '../src/state/idle';
+import { useSession } from '../src/state/session';
+import { ConfirmHost } from '../src/ui/ConfirmDialog';
+import { ToastHost } from '../src/ui/Toast';
+import { useReducedMotion } from '../src/ui/useReducedMotion';
 
 SplashScreen.preventAutoHideAsync();
 
-const queryClient = new QueryClient();
+/** Waits for the saved session (read or failed), then `auth.restore()` before any other service call (specs § 4.1), then the theme. */
+function useLaunch(): boolean {
+  const { setPreference } = useTheme();
+  const hydrated = useSession((s) => s.hydrated);
+  const [done, setDone] = useState(false);
 
-function Shell() {
+  useEffect(() => {
+    if (!hydrated) return;
+    const services = currentServices();
+    (async () => {
+      try {
+        const { mode, user: saved } = useSession.getState();
+        const user = await services.auth.restore();
+        if (user) useSession.getState().signedIn(user);
+        // A server session that was open but didn't survive (idle too long, ended by the server) goes to Sign In.
+        else useSession.getState().signedOut(undefined, mode === 'server' && saved ? '/signin' : '/welcome');
+      } catch {
+        // Server unreachable at launch: keep the persisted user; screens show Error with Retry (Review Focus 1).
+      }
+      try {
+        setPreference((await services.profile.getPreferences()).theme);
+      } catch {
+        setPreference('system'); // server mode can reject with `network`; that must not stop the app or sign out
+      }
+    })().finally(() => setDone(true));
+  }, [hydrated]); // once per launch: a later mode switch must not restore (the user signs in again)
+
+  return done;
+}
+
+function Shell({ fontsReady }: { fontsReady: boolean }) {
   const { colors, scheme } = useTheme();
+  const reduced = useReducedMotion();
+  const launched = useLaunch();
+  const signedIn = useSession((s) => s.user !== null);
+  const segments = useSegments();
+  useIdleSignOut();
+
+  const ready = fontsReady && launched;
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync();
+  }, [ready]);
+  if (!ready) return null;
+
   return (
-    <>
+    <View style={{ flex: 1, backgroundColor: colors.ground }}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.ground } }} />
-    </>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.ground },
+          // Screens slide in like sheets pulled from a book; under reduced motion they crossfade.
+          animation: reduced ? 'fade' : 'slide_from_right',
+        }}
+      >
+        {/* Signed out, only the auth screens exist (the rest redirect to Welcome; (auth)/_layout opens Sign In over it after an idle
+            or expired sign-out); signed in, the auth screens redirect to the tabs. */}
+        <Stack.Protected guard={!signedIn} redirectTo="/">
+          <Stack.Screen name="(auth)" />
+        </Stack.Protected>
+        <Stack.Protected guard={signedIn} redirectTo="/welcome">
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="space/add-people" />
+          <Stack.Screen name="space/[id]/index" />
+          <Stack.Screen name="space/[id]/members" />
+          <Stack.Screen name="space/[id]/settle" />
+          <Stack.Screen name="space/[id]/expense-new" />
+          <Stack.Screen name="expense/[id]/index" />
+          <Stack.Screen name="expense/[id]/edit" />
+          <Stack.Screen name="payment/[id]" />
+          <Stack.Screen name="profile-edit" />
+        </Stack.Protected>
+      </Stack>
+      <ToastHost aboveTabs={segments[0] === '(tabs)'} />
+      <ConfirmHost />
+    </View>
   );
 }
 
@@ -31,18 +106,12 @@ export default function RootLayout() {
     [fonts.displayBold]: require('../assets/fonts/Fraunces-Display-Bold.ttf'),
   });
 
-  // A font failure still opens the app (system serif) rather than stranding it on the splash.
-  const ready = loaded || error != null;
-  useEffect(() => {
-    if (ready) SplashScreen.hideAsync();
-  }, [ready]);
-  if (!ready) return null;
-
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
-          <Shell />
+          {/* A font failure still opens the app (system serif) rather than stranding it on the splash. */}
+          <Shell fontsReady={loaded || error != null} />
         </SafeAreaProvider>
       </QueryClientProvider>
     </ThemeProvider>
