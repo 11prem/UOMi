@@ -73,6 +73,7 @@ export function OtpInput({ value, onChange, error, shakeKey, autoFocus, onComple
       <TextInput
         ref={setRefs}
         value={value}
+        // No maxLength: it would cut a pasted "123 456" to six characters before the digits are picked out.
         onChangeText={(t) => {
           const code = t.replace(/\D/g, '').slice(0, LENGTH);
           onChange(code);
@@ -85,7 +86,6 @@ export function OtpInput({ value, onChange, error, shakeKey, autoFocus, onComple
         inputMode="numeric"
         autoComplete={Platform.OS === 'android' ? 'sms-otp' : 'one-time-code'}
         textContentType="oneTimeCode"
-        maxLength={LENGTH}
         caretHidden
         contextMenuHidden={false}
         maxFontSizeMultiplier={FONT_CAP}

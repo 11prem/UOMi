@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { motion } from '../theme/tokens';
@@ -19,6 +19,10 @@ export type StampProps = {
 };
 
 const REST = 0.88;
+const RING = 2.5;
+const CAP = 1.2; // a fixed 80 px circle: past 1.2× system text the lettering would only shrink anyway
+// Lettering may run the stamp's full width, as in the prototype (REJECTED is 79 px at 12 px); wider labels shrink to fit.
+const LETTER_BOX = size.stamp;
 
 /** The round rubber stamp (DESIGN.md § Rubber Stamp): ink only, double ring, rotated −12°. */
 export function Stamp({ label, red, land, inline, style }: StampProps) {
@@ -26,6 +30,10 @@ export function Stamp({ label, red, land, inline, style }: StampProps) {
   const reduced = useReducedMotion();
   const t = useRef(new Animated.Value(land ? 0 : 1)).current;
   const ink = red ? colors.stampRed : colors.stampAgreed;
+  // The label's natural one-line width, measured once; only a label wider than the stamp (NOT RECEIVED, or big system
+  // text) shrinks. Measured rather than adjustsFontSizeToFit, which react-native-web doesn't support.
+  const [natural, setNatural] = useState(0);
+  const fit = natural > LETTER_BOX ? LETTER_BOX / natural : 1;
 
   useEffect(() => {
     if (!land) return;
@@ -40,7 +48,9 @@ export function Stamp({ label, red, land, inline, style }: StampProps) {
   if (inline) {
     return (
       <View style={[{ alignSelf: 'flex-start', borderWidth: 2, borderColor: ink, borderRadius: size.stamp, paddingVertical: 2, paddingHorizontal: space.s2, opacity: REST, transform: [{ rotate: '-4deg' }] }, style]}>
-        <Text style={[type.stamp, { color: ink }]}>{label}</Text>
+        <Text style={[type.stamp, { color: ink }]} numberOfLines={1}>
+          {label}
+        </Text>
       </View>
     );
   }
@@ -64,21 +74,28 @@ export function Stamp({ label, red, land, inline, style }: StampProps) {
           width: size.stamp,
           height: size.stamp,
           borderRadius: size.stamp / 2,
-          borderWidth: 2.5,
+          borderWidth: RING,
           borderColor: ink,
-          paddingHorizontal: space.s2 + 2,
-          alignItems: 'center',
-          justifyContent: 'center',
         },
         motionStyle,
         style,
       ]}
     >
       <View style={{ position: 'absolute', top: space.s1, left: space.s1, right: space.s1, bottom: space.s1, borderRadius: size.stamp / 2, borderWidth: 1, borderColor: ink, opacity: 0.8 }} />
-      {/* A fixed 80 px circle: the lettering shrinks to fit rather than grow out of the ring. */}
-      <Text style={[type.stamp, { color: ink, textAlign: 'center' }]} maxFontSizeMultiplier={1.2} adjustsFontSizeToFit numberOfLines={2}>
-        {label}
-      </Text>
+      <View aria-hidden style={{ position: 'absolute', left: -LETTER_BOX, width: LETTER_BOX * 3, opacity: 0, alignItems: 'flex-start' }}>
+        <Text style={type.stamp} maxFontSizeMultiplier={CAP} numberOfLines={1} onLayout={(e) => setNatural(e.nativeEvent.layout.width)}>
+          {label}
+        </Text>
+      </View>
+      <View style={{ position: 'absolute', top: 0, bottom: 0, left: -RING, right: -RING, alignItems: 'center', justifyContent: 'center' }}>
+        <Text
+          numberOfLines={1}
+          maxFontSizeMultiplier={CAP}
+          style={[type.stamp, { color: ink, textAlign: 'center' }, fit < 1 && { fontSize: type.stamp.fontSize! * fit, letterSpacing: type.stamp.letterSpacing! * fit }]}
+        >
+          {label}
+        </Text>
+      </View>
     </Animated.View>
   );
 }
