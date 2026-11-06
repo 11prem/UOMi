@@ -1,5 +1,6 @@
 """Small helpers shared by the tests."""
 
+from datetime import datetime
 from decimal import Decimal
 
 from app.database import SessionLocal, utcnow
@@ -47,10 +48,13 @@ def error_code(response) -> str:
     return response.json()["detail"]["code"]
 
 
-def create_space(client, tokens: dict, name: str = "Trip", usernames=(), icon: str = "trip") -> dict:
-    response = client.post(
-        "/spaces", json={"name": name, "icon": icon, "usernames": list(usernames)}, headers=auth(tokens)
-    )
+def create_space(
+    client, tokens: dict, name: str = "Trip", usernames=(), icon: str = "trip", currency: str | None = None
+) -> dict:
+    payload = {"name": name, "icon": icon, "usernames": list(usernames)}
+    if currency is not None:
+        payload["currency"] = currency
+    response = client.post("/spaces", json=payload, headers=auth(tokens))
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -71,7 +75,13 @@ def minor(amount: str) -> int:
     return int(Decimal(amount) * 100)
 
 
-def add_expense(space_id: int, paid_by: str, title: str, shares: dict[str, tuple[str, ShareStatus]]) -> int:
+def add_expense(
+    space_id: int,
+    paid_by: str,
+    title: str,
+    shares: dict[str, tuple[str, ShareStatus]],
+    updated_at: datetime | None = None,
+) -> int:
     """Insert a bill and its shares straight into the database. shares = {username: (amount, status)}."""
     with SessionLocal() as session:
         total = sum(minor(amount) for amount, _ in shares.values())
@@ -82,6 +92,7 @@ def add_expense(space_id: int, paid_by: str, title: str, shares: dict[str, tuple
             description=title,
             amount_minor=total,
             date=utcnow().date(),
+            updated_at=updated_at or utcnow(),
         )
         session.add(expense)
         session.flush()
@@ -93,9 +104,23 @@ def add_expense(space_id: int, paid_by: str, title: str, shares: dict[str, tuple
         return expense.id
 
 
-def add_settlement(space_id: int, payer: str, payee: str, amount: str, status: SettlementStatus) -> None:
+def add_settlement(
+    space_id: int,
+    payer: str,
+    payee: str,
+    amount: str,
+    status: SettlementStatus,
+    answered_at: datetime | None = None,
+) -> None:
     with SessionLocal() as session:
         session.add(
-            Settlement(space_id=space_id, payer=payer, payee=payee, amount_minor=minor(amount), status=status)
+            Settlement(
+                space_id=space_id,
+                payer=payer,
+                payee=payee,
+                amount_minor=minor(amount),
+                status=status,
+                answered_at=answered_at,
+            )
         )
         session.commit()

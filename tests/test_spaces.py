@@ -1,7 +1,5 @@
 """Create space, the Home page list and the Group page (balances and who owes whom)."""
 
-from decimal import Decimal
-
 import pytest
 from sqlalchemy import update
 
@@ -11,6 +9,7 @@ from tests.helpers import add_expense, add_settlement, auth, create_space, db_ex
 
 ACCEPTED = ShareStatus.ACCEPTED
 PENDING = ShareStatus.PENDING
+REJECTED = ShareStatus.REJECTED
 
 
 @pytest.fixture
@@ -22,8 +21,13 @@ def get_space(client, tokens, space_id):
     return client.get(f"/spaces/{space_id}", headers=auth(tokens))
 
 
-def balance(client, tokens, space_id) -> Decimal:
-    return Decimal(get_space(client, tokens, space_id).json()["balance"])
+def balance(client, tokens, space_id) -> int:
+    return get_space(client, tokens, space_id).json()["balance_minor"]
+
+
+def owes(view: dict) -> list[tuple[str, str, int]]:
+    """The 'who owes whom' lines as (debtor, creditor, amount_minor)."""
+    return [(p["debtor"]["username"], p["creditor"]["username"], p["amount_minor"]) for p in view["pairwise"]]
 
 
 # --- Create space -----------------------------------------------------------
@@ -93,10 +97,10 @@ def test_home_lists_my_spaces_newest_first(client, users):
     create_space(client, users["bob"], "Not alice's")
 
     home = client.get("/spaces", headers=auth(users["alice"])).json()
-    assert home["currency"] == "INR"
     assert [s["id"] for s in home["spaces"]] == [second["id"], first["id"]]
     assert [s["member_count"] for s in home["spaces"]] == [1, 2]
-    assert Decimal(home["overall_balance"]) == 0
+    assert [s["currency"] for s in home["spaces"]] == ["INR", "INR"]
+    assert home["overall"] == []  # nothing owed either way yet
 
 
 def test_home_overall_balance_adds_up_every_space(client, users):
@@ -106,9 +110,9 @@ def test_home_overall_balance_adds_up_every_space(client, users):
     add_expense(two["id"], "bob", "Taxi", {"alice": ("30", ACCEPTED), "bob": ("30", ACCEPTED)})
 
     home = client.get("/spaces", headers=auth(users["alice"])).json()
-    by_id = {s["id"]: Decimal(s["balance"]) for s in home["spaces"]}
-    assert by_id == {one["id"]: Decimal("100"), two["id"]: Decimal("-30")}
-    assert Decimal(home["overall_balance"]) == Decimal("70")
+    by_id = {s["id"]: s["balance_minor"] for s in home["spaces"]}
+    assert by_id == {one["id"]: 10000, two["id"]: -3000}
+    assert home["overall"] == [{"currency": "INR", "net_minor": 7000, "owe_minor": 3000, "owed_minor": 10000}]
 
 
 # --- Group page -------------------------------------------------------------
@@ -134,40 +138,44 @@ def test_balances_and_who_owes_whom(client, users):
         {"alice": ("100", ACCEPTED), "bob": ("100", ACCEPTED), "carol": ("100", PENDING)},
     )
 
-    # alice paid; only bob has accepted his share so far
+    # alice paid; bob accepted his share and carol has not answered yet. A pending share counts.
     alice_view = get_space(client, users["alice"], sid).json()
-    assert Decimal(alice_view["balance"]) == 100
-    assert len(alice_view["bills"]) == 1
-    bill = alice_view["bills"][0]
-    assert (bill["title"], bill["paid_by"]["username"]) == ("Groceries", "alice")
-    assert Decimal(bill["my_share"]) == 100 and bill["my_share_status"] == "accepted"
-    assert [(d["debtor"]["username"], d["creditor"]["username"], Decimal(d["amount"])) for d in alice_view["who_owes_whom"]] == [
-        ("bob", "alice", Decimal("100"))
-    ]
+    assert alice_view["balance_minor"] == 20000
+    assert len(alice_view["expenses"]) == 1
+    expense = alice_view["expenses"][0]
+    assert (expense["description"], expense["paid_by"]["username"]) == ("Groceries", "alice")
+    assert expense["my_share_minor"] == 10000 and expense["my_share_status"] == "accepted"
+    assert owes(alice_view) == [("bob", "alice", 10000), ("carol", "alice", 10000)]
 
-    assert balance(client, users["bob"], sid) == -100  # "You owe 100"
+    assert balance(client, users["bob"], sid) == -10000  # "You owe 100"
     carol_view = get_space(client, users["carol"], sid).json()
-    assert Decimal(carol_view["balance"]) == 0  # a share still waiting for the tick does not count
-    assert carol_view["bills"][0]["my_share_status"] == "pending"
+    assert carol_view["balance_minor"] == -10000
+    assert carol_view["expenses"][0]["my_share_status"] == "pending"
 
-    # carol ticks her share
+    # carol rejects her share: the whole expense is disputed and counts for nobody
+    db_exec(update(ExpenseShare).where(ExpenseShare.username == "carol").values(status=REJECTED))
+    assert [balance(client, users[name], sid) for name in ("alice", "bob", "carol")] == [0, 0, 0]
+    disputed_view = get_space(client, users["alice"], sid).json()
+    assert disputed_view["expenses"][0]["disputed"] is True
+    assert disputed_view["pairwise"] == []
+
+    # carol changes her mind and accepts
     db_exec(update(ExpenseShare).where(ExpenseShare.username == "carol").values(status=ACCEPTED))
-    assert balance(client, users["alice"], sid) == 200
-    assert balance(client, users["carol"], sid) == -100
+    assert balance(client, users["alice"], sid) == 20000
+    assert balance(client, users["carol"], sid) == -10000
 
     # bob pays alice back, and she confirms
     add_settlement(sid, "bob", "alice", "100", SettlementStatus.CONFIRMED)
     assert balance(client, users["bob"], sid) == 0
-    assert balance(client, users["alice"], sid) == 100
-    owes = get_space(client, users["alice"], sid).json()["who_owes_whom"]
-    assert [(d["debtor"]["username"], d["creditor"]["username"]) for d in owes] == [("carol", "alice")]
+    assert balance(client, users["alice"], sid) == 10000
+    assert owes(get_space(client, users["alice"], sid).json()) == [("carol", "alice", 10000)]
 
 
 def test_a_settlement_nobody_confirmed_does_not_count(client, users):
     space = create_space(client, users["alice"], "Flat", ["bob"])
     add_expense(space["id"], "alice", "Rent", {"alice": ("50", ACCEPTED), "bob": ("50", ACCEPTED)})
     add_settlement(space["id"], "bob", "alice", "50", SettlementStatus.PENDING)
-    assert balance(client, users["bob"], space["id"]) == -50
+    assert balance(client, users["bob"], space["id"]) == -5000
 
 
 def test_overpaying_flips_who_owes_whom(client, users):
@@ -175,7 +183,4 @@ def test_overpaying_flips_who_owes_whom(client, users):
     add_expense(space["id"], "alice", "Rent", {"alice": ("50", ACCEPTED), "bob": ("50", ACCEPTED)})
     add_settlement(space["id"], "bob", "alice", "80", SettlementStatus.CONFIRMED)
 
-    owes = get_space(client, users["alice"], space["id"]).json()["who_owes_whom"]
-    assert [(d["debtor"]["username"], d["creditor"]["username"], Decimal(d["amount"])) for d in owes] == [
-        ("alice", "bob", Decimal("30"))
-    ]
+    assert owes(get_space(client, users["alice"], space["id"]).json()) == [("alice", "bob", 3000)]

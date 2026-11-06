@@ -1,15 +1,18 @@
 """Request/response shapes for spaces: Home page list, Add People + create flow, Group page.
 
 Balance convention used everywhere: positive = you are owed, negative = you owe.
-The Group page's "You owe ₹100" is therefore a balance of -100.
+The Group page's "You owe ₹100" is therefore a `balance_minor` of -10000.
+Money fields end in `_minor` and are integers (paise, cents).
 """
 
-from datetime import datetime
-from decimal import Decimal
+import datetime as dt
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.currencies import SUPPORTED_CURRENCIES
+from app.models.expense import SplitType
 from app.models.expense_split import ShareStatus
+from app.models.payment import SettlementStatus
 from app.schemas.user import UserSummary
 from app.utils.validators import clean_name, validate_username
 
@@ -21,12 +24,20 @@ class SpaceCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=100)
     icon: str = Field(pattern=r"^[a-z0-9_-]{1,50}$")  # key chosen in the icon picker
+    currency: str | None = None  # a supported code; left out means the creator's default currency
     usernames: list[str] = Field(default_factory=list, max_length=MAX_NEW_MEMBERS)
 
     @field_validator("name")
     @classmethod
     def check_name(cls, v: str) -> str:
         return clean_name(v)
+
+    @field_validator("currency")
+    @classmethod
+    def check_currency(cls, v: str | None) -> str | None:
+        if v is not None and v not in SUPPORTED_CURRENCIES:
+            raise ValueError(f"Currency must be one of: {', '.join(SUPPORTED_CURRENCIES)}")
+        return v
 
     @field_validator("usernames")
     @classmethod
@@ -42,22 +53,35 @@ class SpaceCreate(BaseModel):
         return cleaned
 
 
-class SpaceSummary(BaseModel):
-    """One card in the Home page's Groups list."""
+class SpaceCard(BaseModel):
+    """One card in the Home page's list of spaces."""
 
     id: int
     name: str
     icon: str
+    currency: str
     member_count: int
-    balance: Decimal
+    balance_minor: int
+    open_balances: int  # how many people the viewer has a non-zero balance with
+    counterparty_name: str | None  # full name of the one person on the side of the net, else None
+    counterparty_count: int  # how many people are on the side of the net
+    last_activity_at: dt.datetime
+
+
+class OverallLine(BaseModel):
+    """The Home page's overall balance in one currency. Currencies are never added together."""
+
+    currency: str
+    net_minor: int
+    owe_minor: int
+    owed_minor: int
 
 
 class SpaceListOut(BaseModel):
-    """Home page: overall balance and the Groups list."""
+    """Home page: overall balance per currency and the spaces, newest activity first."""
 
-    currency: str
-    overall_balance: Decimal
-    spaces: list[SpaceSummary]
+    overall: list[OverallLine]
+    spaces: list[SpaceCard]
 
 
 class MemberOut(BaseModel):
@@ -66,34 +90,54 @@ class MemberOut(BaseModel):
     position: int
 
 
-class BillOut(BaseModel):
+class ExpenseRow(BaseModel):
     """One expense card on the Group page."""
 
     id: int
-    title: str
-    amount: Decimal
+    description: str
+    amount_minor: int
+    split_type: SplitType
     paid_by: UserSummary
-    created_at: datetime
-    my_share: Decimal | None  # None if the viewer has no share in this bill
+    created_by: UserSummary
+    date: dt.date
+    created_at: dt.datetime
+    updated_at: dt.datetime
+    my_share_minor: int | None  # None if the viewer has no share in this expense
     my_share_status: ShareStatus | None
+    disputed: bool  # someone rejected their share, so the expense is left out of every balance
 
 
-class DebtOut(BaseModel):
+class SettlementRow(BaseModel):
+    """One payment between two people."""
+
+    id: int
+    from_user: UserSummary  # who handed over the money
+    to_user: UserSummary  # who received it
+    amount_minor: int
+    status: SettlementStatus
+    created_at: dt.datetime
+    answered_at: dt.datetime | None
+
+
+class PairOut(BaseModel):
     """One line of "who owes whom"."""
 
     debtor: UserSummary
     creditor: UserSummary
-    amount: Decimal
+    amount_minor: int
 
 
 class SpaceDetailOut(BaseModel):
-    """Group page: header (name + members icon), balance, bills, who owes whom."""
+    """Group page: header, the viewer's balance, members, expenses, payments and who owes whom."""
 
     id: int
     name: str
     icon: str
     currency: str
-    balance: Decimal
+    owner_username: str
+    created_at: dt.datetime
+    balance_minor: int
     members: list[MemberOut]
-    bills: list[BillOut]
-    who_owes_whom: list[DebtOut]
+    expenses: list[ExpenseRow]
+    settlements: list[SettlementRow]
+    pairwise: list[PairOut]

@@ -4,36 +4,30 @@ Everything starts from the signed-in username: a space you are not in does not e
 you are concerned (404, never 403), so nobody can probe for other people's spaces.
 """
 
-from decimal import Decimal
-
-from sqlalchemy import and_, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, select
+from sqlalchemy.orm import Session, aliased
 
 from app.models.expense import Expense
-from app.models.expense_split import ExpenseShare
+from app.models.expense_split import ExpenseShare, ShareStatus
 from app.models.group import Space
 from app.models.group_member import SpaceMember
 from app.models.notification import NotificationType
+from app.models.payment import Settlement
 from app.models.user import User
 from app.schemas.group import (
-    BillOut,
-    DebtOut,
+    ExpenseRow,
     MemberOut,
+    PairOut,
+    SettlementRow,
     SpaceCreate,
     SpaceDetailOut,
     SpaceListOut,
-    SpaceSummary,
 )
 from app.schemas.user import UserSummary
 from app.services import balance_service, notification_service
 from app.utils.errors import api_error
 
-BILLS_LIMIT = 50
-
-
-def _money(minor: int) -> Decimal:
-    """The API still shows amounts as two-place decimals; it switches to integer minor units later."""
-    return Decimal(minor).scaleb(-2)
+EXPENSES_LIMIT = 50
 
 
 def create_space(db: Session, creator: User, data: SpaceCreate) -> Space:
@@ -49,7 +43,12 @@ def create_space(db: Session, creator: User, data: SpaceCreate) -> Space:
                 422, "unknown_usernames", "Some of these usernames do not exist.", usernames=missing
             )
 
-    space = Space(name=data.name, icon=data.icon, created_by=creator.username)
+    space = Space(
+        name=data.name,
+        icon=data.icon,
+        currency=data.currency or creator.currency,
+        created_by=creator.username,
+    )
     db.add(space)
     db.flush()  # fills in space.id
 
@@ -68,41 +67,14 @@ def create_space(db: Session, creator: User, data: SpaceCreate) -> Space:
 
 
 def list_spaces(db: Session, user: User) -> SpaceListOut:
-    """Home page: the spaces you are in, each with your balance, plus the overall balance."""
-    member_counts = (
-        select(SpaceMember.space_id, func.count().label("member_count"))
-        .group_by(SpaceMember.space_id)
-        .subquery()
-    )
-    rows = db.execute(
-        select(Space, member_counts.c.member_count)
-        .join(
-            SpaceMember,
-            and_(SpaceMember.space_id == Space.id, SpaceMember.username == user.username),
-        )
-        .join(member_counts, member_counts.c.space_id == Space.id)
-        .order_by(Space.id.desc())
-    ).all()
-
-    balances = balance_service.get_balances(db, user.username, [space.id for space, _ in rows])
-    return SpaceListOut(
-        currency=user.currency,
-        overall_balance=_money(sum(balances.values(), balance_service.ZERO)),
-        spaces=[
-            SpaceSummary(
-                id=space.id,
-                name=space.name,
-                icon=space.icon,
-                member_count=count,
-                balance=_money(balances[space.id]),
-            )
-            for space, count in rows
-        ],
-    )
+    """Home page: the overall balance per currency, and the spaces you are in, latest activity first."""
+    cards = balance_service.space_cards(db, balance_service.spaces_of(db, user.username), user.username)
+    cards.sort(key=lambda card: (card.last_activity_at, card.id), reverse=True)
+    return SpaceListOut(overall=balance_service.overall(db, user.username), spaces=cards)
 
 
 def get_space_detail(db: Session, user: User, space_id: int) -> SpaceDetailOut:
-    """Group page: header, your balance, the bills and who owes whom."""
+    """Group page: header, your balance, the members, expenses, payments and who owes whom."""
     if db.get(SpaceMember, (space_id, user.username)) is None:
         raise api_error(404, "space_not_found", "Space not found.")
     space = db.get(Space, space_id)
@@ -116,43 +88,71 @@ def get_space_detail(db: Session, user: User, space_id: int) -> SpaceDetailOut:
     ).all()
     names = {username: name for username, name, _ in member_rows}
 
-    bill_rows = db.execute(
-        select(Expense, User.name, ExpenseShare.amount_minor, ExpenseShare.status)
-        .select_from(Expense)
-        .join(User, User.username == Expense.paid_by)
-        .outerjoin(
-            ExpenseShare,
-            and_(ExpenseShare.expense_id == Expense.id, ExpenseShare.username == user.username),
-        )
-        .where(Expense.space_id == space_id)
-        .order_by(Expense.id.desc())
-        .limit(BILLS_LIMIT)
-    ).all()
-
     def person(username: str) -> UserSummary:
         return UserSummary(username=username, name=names.get(username, username))
 
+    mine = aliased(ExpenseShare)  # the viewer's own share of each expense, if they have one
+    disputed = exists().where(
+        ExpenseShare.expense_id == Expense.id, ExpenseShare.status == ShareStatus.REJECTED
+    )
+    expense_rows = db.execute(
+        select(Expense, mine.amount_minor, mine.status, disputed.label("disputed"))
+        .select_from(Expense)
+        .outerjoin(mine, and_(mine.expense_id == Expense.id, mine.username == user.username))
+        .where(Expense.space_id == space_id)
+        .order_by(Expense.id.desc())
+        .limit(EXPENSES_LIMIT)
+    ).all()
+
+    settlements = db.scalars(
+        select(Settlement).where(Settlement.space_id == space_id).order_by(Settlement.id.desc())
+    ).all()
+
+    pairs = balance_service.pairwise(db, space_id)
     return SpaceDetailOut(
         id=space.id,
         name=space.name,
         icon=space.icon,
-        currency=user.currency,
-        balance=_money(balance_service.get_space_balance(db, user.username, space_id)),
+        currency=space.currency,
+        owner_username=space.created_by,
+        created_at=space.created_at,
+        balance_minor=sum(balance_service.side_of(pairs, user.username).values()),
         members=[MemberOut(username=u, name=n, position=p) for u, n, p in member_rows],
-        bills=[
-            BillOut(
+        expenses=[
+            ExpenseRow(
                 id=expense.id,
-                title=expense.description,
-                amount=_money(expense.amount_minor),
-                paid_by=UserSummary(username=expense.paid_by, name=payer_name),
+                description=expense.description,
+                amount_minor=expense.amount_minor,
+                split_type=expense.split_type,
+                paid_by=person(expense.paid_by),
+                created_by=person(expense.created_by),
+                date=expense.date,
                 created_at=expense.created_at,
-                my_share=None if my_share is None else _money(my_share),
-                my_share_status=my_share_status,
+                updated_at=expense.updated_at,
+                my_share_minor=my_share,
+                my_share_status=my_status,
+                disputed=is_disputed,
             )
-            for expense, payer_name, my_share, my_share_status in bill_rows
+            for expense, my_share, my_status, is_disputed in expense_rows
         ],
-        who_owes_whom=[
-            DebtOut(debtor=person(d.debtor), creditor=person(d.creditor), amount=_money(d.amount))
-            for d in balance_service.get_debts(db, space_id)
+        settlements=[
+            SettlementRow(
+                id=s.id,
+                from_user=person(s.payer),
+                to_user=person(s.payee),
+                amount_minor=s.amount_minor,
+                status=s.status,
+                created_at=s.created_at,
+                answered_at=s.answered_at,
+            )
+            for s in settlements
+        ],
+        pairwise=[
+            PairOut(
+                debtor=person(b if amount > 0 else a),  # a value above 0 means b owes a
+                creditor=person(a if amount > 0 else b),
+                amount_minor=abs(amount),
+            )
+            for (a, b), amount in sorted(pairs.items())
         ],
     )

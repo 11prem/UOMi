@@ -16,7 +16,7 @@ router = APIRouter(prefix="/spaces", tags=["spaces"])
 def list_spaces(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ) -> SpaceListOut:
-    """Home page: overall balance and the Groups list."""
+    """Home page: overall balance per currency and the spaces, latest activity first."""
     return group_service.list_spaces(db, current_user)
 
 
@@ -37,5 +37,5 @@ def get_space(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SpaceDetailOut:
-    """Home page, tap a group card -> Group page: bills and who owes whom."""
+    """Home page, tap a space card -> Group page: expenses, payments and who owes whom."""
     return group_service.get_space_detail(db, current_user, space_id)
