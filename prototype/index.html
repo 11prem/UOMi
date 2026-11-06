@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>UOMi prototype</title>
+<link rel="preload" href="../assets/fonts/fraunces/Fraunces-Variable.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="stage">
+  <div class="device" id="device">
+    <div class="screens" id="screens"></div>
+    <nav class="tabbar hidden" id="tabbar" aria-label="Main"></nav>
+    <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  </div>
+  <aside class="proto-controls" aria-label="Prototype controls">
+    <div class="group">
+      <h2>Prototype</h2>
+      <p>UI prototype of UOMi at phone size. All people and amounts are synthetic demo data. Sign in as <b>kabir.r</b> / <b>demo1234</b>.</p>
+    </div>
+    <div class="group">
+      <p class="label">Theme</p>
+      <div class="seg" id="pc-theme">
+        <button data-pc-theme="system">System</button>
+        <button data-pc-theme="light">Light</button>
+        <button data-pc-theme="dark">Dark</button>
+      </div>
+    </div>
+    <div class="group">
+      <p class="label">Demo tools</p>
+      <button class="btn secondary" data-pc="debug">Open debug menu</button>
+      <button class="btn secondary" data-pc="reset">Reset demo data</button>
+      <p>The debug menu is also hidden in the app: long-press the Profile title.</p>
+    </div>
+  </aside>
+</div>
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

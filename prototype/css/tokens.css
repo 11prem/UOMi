@@ -1,0 +1,122 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+@font-face {
+  font-family: "Fraunces";
+  src: url("../../assets/fonts/fraunces/Fraunces-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  /* paper */
+  --stage: #D7DBE3;
+  --stage-ink-2: #444A58;
+  --ground: #EEF0F4;
+  --sheet: #FFFFFF;
+  --sheet-2: #F6F7FA;
+  --dup-pink: #F2C4CE;
+  --dup-yellow: #F3DF73;
+  --dup-pink-edge: #D99AAA;
+  --dup-yellow-edge: #CDB548;
+  --perf: #8C92A0;
+  --hair: rgba(95, 101, 116, .22);
+  --hair-strong: rgba(95, 101, 116, .38);
+  /* ink */
+  --ink: #1B1F2A;
+  --ink-2: #5F6574;
+  --carbon: #23308A;
+  --carbon-press: #1A246C;
+  --on-carbon: #FFFFFF;
+  --carbon-wash: rgba(35, 48, 138, .08);
+  /* meaning */
+  --owe: #B8322A;
+  --owed: #1D734A;
+  --pending: #7F6200;
+  --control-edge: #767C8C;
+  --stamp-agreed: #23308A;
+  --stamp-red: #B8322A;
+  --badge: #F3DF73;
+  --on-badge: #1B1F2A;
+  --scrim: rgba(17, 20, 33, .44);
+  --focus: #23308A;
+  --skeleton: rgba(95, 101, 116, .12);
+  --selection: rgba(35, 48, 138, .18);
+  /* elevation (soft, offset) */
+  --lift-1: 0 1px 2px rgba(27, 31, 42, .06), 0 2px 6px rgba(27, 31, 42, .05);
+  --lift-2: 0 6px 16px rgba(27, 31, 42, .10), 0 2px 4px rgba(27, 31, 42, .06);
+  --lift-3: 0 18px 40px rgba(17, 20, 33, .22), 0 4px 10px rgba(17, 20, 33, .10);
+
+  /* member furniture: fixed per person, used everywhere */
+  --m1: #23308A; --m2: #9C3B5C; --m3: #1D6B63; --m4: #8A5A12; --m5: #5B3E99; --m6: #2E6E2E;
+
+  /* type: three sizes + display figures */
+  --font: "Fraunces", Georgia, serif;
+  --fs-display: 32px;  --lh-display: 38px;
+  --fs-title: 20px;    --lh-title: 26px;
+  --fs-body: 16px;     --lh-body: 22px;
+  --fs-label: 13px;    --lh-label: 18px;
+  --fs-figure: 28px;   --lh-figure: 34px;
+
+  /* space: 4px grid */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px;
+  --radius-sheet: 6px;
+  --radius-pill: 999px;
+  --gutter: 16px;
+  --safe-top: 47px;
+  --safe-bottom: 34px;
+  --tabbar: 58px;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --t-press: 120ms;
+  --t-fast: 160ms;
+  --t-base: 220ms;
+  --t-screen: 320ms;
+  --stagger: 40ms;
+}
+
+/* Carbon paper: the dark theme */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --stage: #05070F;
+  --stage-ink-2: #A9AFC7;
+  --ground: #10142A;
+  --sheet: #1A1F3D;
+  --sheet-2: #20264A;
+  --dup-pink: #6A3550;
+  --dup-yellow: #6E5C1C;
+  --dup-pink-edge: #8E5373;
+  --dup-yellow-edge: #93802F;
+  --perf: #7D84A6;
+  --hair: rgba(164, 170, 194, .18);
+  --hair-strong: rgba(164, 170, 194, .32);
+  --ink: #ECEEF6;
+  --ink-2: #A9AFC7;
+  --carbon: #A9BCFF;
+  --carbon-press: #C3D0FF;
+  --on-carbon: #10142A;
+  --carbon-wash: rgba(169, 188, 255, .12);
+  --owe: #FF9A90;
+  --owed: #7AD9A8;
+  --pending: #E9CF5C;
+  --control-edge: #7D84A6;
+  --stamp-agreed: #A9BCFF;
+  --stamp-red: #FF9A90;
+  --badge: #E9CF5C;
+  --on-badge: #10142A;
+  --scrim: rgba(4, 6, 16, .6);
+  --focus: #A9BCFF;
+  --skeleton: rgba(169, 175, 199, .12);
+  --selection: rgba(169, 188, 255, .28);
+  --lift-1: 0 1px 2px rgba(0, 0, 0, .35);
+  --lift-2: 0 6px 16px rgba(0, 0, 0, .4);
+  --lift-3: 0 18px 40px rgba(0, 0, 0, .55);
+  --m1: #A9BCFF; --m2: #F2A7C0; --m3: #7FD1C6; --m4: #E8C07A; --m5: #C4B0FF; --m6: #9AD98F;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-screen: 180ms; --stagger: 0ms; }
+}
