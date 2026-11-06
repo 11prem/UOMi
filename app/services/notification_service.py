@@ -1,6 +1,6 @@
 """Notification cards: creating them, listing them page by page, and marking them read."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.notification import Notification, NotificationType
@@ -49,7 +49,13 @@ def list_notifications(db: Session, username: str, before: int | None, limit: in
         items=[NotificationOut.model_validate(row) for row in page],
         next_before=page[-1].id if has_more else None,
     )
-
+def get_unread_count(db: Session, username: str) -> int:
+    """Return the number of unread notifications for one user."""
+    stmt = select(func.count()).select_from(Notification).where(
+        Notification.username == username,
+        Notification.is_read.is_(False),
+    )
+    return db.scalar(stmt) or 0
 
 def set_read(db: Session, username: str, notification_id: int, is_read: bool) -> Notification:
     """Mark a card read or unread. Someone else's card is reported as not found."""
@@ -62,3 +68,17 @@ def set_read(db: Session, username: str, notification_id: int, is_read: bool) ->
     db.commit()
     db.refresh(notification)
     return notification
+
+def mark_all_as_read(db: Session, username: str) -> int:
+    """Mark all unread notifications belonging to one user as read."""
+    stmt = (
+        update(Notification)
+        .where(
+            Notification.username == username,
+            Notification.is_read.is_(False),
+        )
+        .values(is_read=True)
+    )
+    result = db.execute(stmt)
+    db.commit()
+    return result.rowcount or 0
