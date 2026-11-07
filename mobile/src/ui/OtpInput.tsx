@@ -8,8 +8,8 @@ import { useReducedMotion } from './useReducedMotion';
 export type OtpInputProps = {
   value: string;
   onChange: (code: string) => void;
-  /** Turns the cells owe-red; bump `shakeKey` alongside it to shake the row ±6 px (no shake under reduced motion). */
-  error?: boolean;
+  /** The error message (shown by the screen): turns the cells owe-red and is read out as the hint. Bump `shakeKey` alongside it to shake the row ±6 px (no shake under reduced motion). */
+  error?: string;
   shakeKey?: number;
   autoFocus?: boolean;
   /** Called once six digits are in. */
@@ -90,7 +90,8 @@ export function OtpInput({ value, onChange, error, shakeKey, autoFocus, onComple
         contextMenuHidden={false}
         maxFontSizeMultiplier={FONT_CAP}
         accessibilityLabel="6-digit code"
-        aria-invalid={!!error}
+        aria-invalid={!!error} // web only; on a phone the hint carries the error
+        accessibilityHint={error || undefined}
         // Invisible but laid over the cells, so taps, long-press paste and autofill reach the real input.
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.01, color: 'transparent' }}
       />

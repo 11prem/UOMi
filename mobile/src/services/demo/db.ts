@@ -32,27 +32,53 @@ export const DemoDbSchema = z.object({
 });
 export type DemoDb = z.infer<typeof DemoDbSchema>;
 
-/** What was saved, or a fresh seed when there is nothing saved or it no longer matches the schema. */
-export async function loadDb(storage: Storage, now: number): Promise<DemoDb> {
+/** The last stored value that could not be read back, kept (latest only) before a fresh seed replaces it. */
+export const UNREADABLE_KEY = 'uomi.demo.v1.unreadable';
+
+/** What to run on: `canSave` false means this run must never write over what is stored; `fresh` is a new seed to save. */
+export type Loaded = { db: DemoDb; canSave: boolean; fresh: boolean };
+
+const parse = (raw: string): DemoDb | null => {
   try {
-    const raw = await storage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = DemoDbSchema.safeParse(JSON.parse(raw));
-      if (parsed.success) return parsed.data;
-    }
+    const parsed = DemoDbSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
   } catch {
-    // unreadable storage: start over from the seed
+    return null; // not JSON
   }
-  const fresh = seed(now);
-  await saveDb(storage, fresh);
-  return fresh;
+};
+
+/**
+ * What was saved, or a fresh seed. Never destroys stored data on a read problem: a read that fails twice runs on a seed in
+ * memory with saving off (the stored data may be fine), and an unreadable value is copied aside before it is replaced.
+ */
+export async function loadDb(storage: Storage, now: number): Promise<Loaded> {
+  let raw: string | null;
+  try {
+    raw = await storage.getItem(STORAGE_KEY).catch(() => storage.getItem(STORAGE_KEY)); // one retry
+  } catch (e) {
+    console.warn('Demo data could not be read; using sample data without saving this time', e);
+    return { db: seed(now), canSave: false, fresh: false };
+  }
+  if (raw) {
+    const saved = parse(raw);
+    if (saved) return { db: saved, canSave: true, fresh: false };
+    try {
+      await storage.setItem(UNREADABLE_KEY, raw);
+    } catch (e) {
+      console.warn('Unreadable demo data could not be backed up; using sample data without saving this time', e);
+      return { db: seed(now), canSave: false, fresh: false };
+    }
+  }
+  return { db: seed(now), canSave: true, fresh: true };
 }
 
-/** Never throws: if the device can't store it, the app keeps working from memory (as the prototype does). */
-export async function saveDb(storage: Storage, db: DemoDb): Promise<void> {
+/** Never throws: if the device can't store it, the app keeps working from memory (as the prototype does). False on failure. */
+export async function saveDb(storage: Storage, db: DemoDb): Promise<boolean> {
   try {
     await storage.setItem(STORAGE_KEY, JSON.stringify(db));
-  } catch {
-    // keep the in-memory data
+    return true;
+  } catch (e) {
+    console.warn('Demo data could not be saved; changes are kept in memory for now', e);
+    return false;
   }
 }

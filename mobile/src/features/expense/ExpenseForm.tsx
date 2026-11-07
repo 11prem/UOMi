@@ -92,12 +92,14 @@ export function ExpenseForm({ title, space: s, members, meId, expense, onSubmit,
   const amounts = Object.fromEntries(split.amounts.map((a) => [a.userId, a.amountMinor]));
   // specs § 8.2: a share count is a whole number ≥ 1 — a ticked 0 would send someone a ₹0.00 share to answer.
   const zeroShare = d.type === 'shares' && rows.some((r) => r.input === 0);
-  const helper = zeroShare && total !== null ? 'Each person ticked needs at least 1 share' : split.helper;
-  const valid = description.length > 0 && total !== null && split.valid && !zeroShare;
+  // The same for exact and percent: a ticked row left empty or at 0 would add up but send a ₹0 share.
+  const emptyRow = (d.type === 'exact' || d.type === 'percent') && split.valid && rows.some((r) => !r.input);
+  const helper = zeroShare && total !== null ? 'Each person ticked needs at least 1 share' : emptyRow ? 'Enter an amount for everyone ticked, or untick them' : split.helper;
+  const valid = description.length > 0 && total !== null && split.valid && !zeroShare && !emptyRow;
 
   let tone: SplitTone = 'muted';
   if (total !== null && rows.length) {
-    if (zeroShare) tone = 'pending';
+    if (zeroShare || emptyRow) tone = 'pending';
     else if (split.valid) tone = d.type === 'exact' || d.type === 'percent' ? 'owed' : 'ink';
     else tone = / over$/.test(split.helper) ? 'owe' : 'pending';
   }

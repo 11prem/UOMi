@@ -3,7 +3,8 @@ import { computeSplit } from '../../domain/split';
 import type { Expense } from '../../domain/types';
 import { AppError } from '../errors';
 import { createDemoServices } from '../demo';
-import { STORAGE_KEY, type Storage } from '../demo/db';
+import { createContext } from '../demo/context';
+import { STORAGE_KEY, UNREADABLE_KEY, type Storage } from '../demo/db';
 import type { Services } from '../types';
 
 const memoryStorage = (): Storage & { data: Map<string, string> } => {
@@ -169,12 +170,58 @@ describe('seed', () => {
     expect(await svc.auth.restore()).toBeNull();
   });
 
-  it('starts from a fresh seed when the stored data is unreadable', async () => {
+  it('starts from a fresh seed when the stored data is unreadable, keeping a copy of what was there', async () => {
+    for (const raw of ['{"version":1,"users":"nope"}', '{not json']) {
+      const storage = memoryStorage();
+      storage.data.set(STORAGE_KEY, raw);
+      const { svc } = make(storage);
+      await signInAs(svc, 'kabir.r');
+      expect(await svc.spaces.list()).toHaveLength(5);
+      expect(storage.data.get(UNREADABLE_KEY)).toBe(raw);
+      expect(JSON.parse(storage.data.get(STORAGE_KEY)!).session.userId).toBe('u_kabir');
+    }
+  });
+
+  it('a storage read that keeps failing runs on sample data in memory and never overwrites what is stored', async () => {
     const storage = memoryStorage();
-    storage.data.set(STORAGE_KEY, '{"version":1,"users":"nope"}');
-    const { svc } = make(storage);
+    storage.data.set(STORAGE_KEY, 'whatever was saved');
+    const getItem = jest.fn(async () => {
+      throw new Error('disk busy');
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { svc } = make({ ...storage, getItem });
     await signInAs(svc, 'kabir.r');
-    expect(await svc.spaces.list()).toHaveLength(5);
+    await tripWithSwetha(svc); // a write
+    expect((await svc.spaces.list()).length).toBe(6); // the app works
+    expect(getItem).toHaveBeenCalledTimes(2); // tried once more
+    expect([...storage.data.entries()]).toEqual([[STORAGE_KEY, 'whatever was saved']]); // nothing written, no backup either
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a read that fails once is tried again and finds the saved data', async () => {
+    const { svc, storage } = make();
+    await tripWithSwetha(svc);
+    let calls = 0;
+    const flaky: Storage = {
+      getItem: async (k) => {
+        if (calls++ === 0) throw new Error('not ready');
+        return storage.getItem(k);
+      },
+      setItem: storage.setItem,
+    };
+    const { svc: reopened } = make(flaky);
+    expect((await reopened.spaces.list()).length).toBe(6);
+  });
+
+  it('a failed save keeps the app working, warns and is flagged', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const full: Storage = { getItem: async () => null, setItem: async () => Promise.reject(new Error('disk full')) };
+    const c = createContext(full, { delay: false });
+    await c.read(() => null);
+    expect(c.lastSaveFailed).toBe(true);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -309,6 +356,9 @@ describe('the money loop', () => {
     await rejects(svc.expenses.create({ ...ok, amountMinor: 0 }), 'validation_error');
     await rejects(svc.expenses.create({ ...ok, paidBy: 'u_meera' }), 'validation_error'); // not a member of Goa Trip
     await rejects(svc.expenses.create({ ...ok, spaceId: 'sp_nope' }), 'not_found');
+    // Nobody in the split is sent a share of 0 to answer (an exact row left at 0 still adds up).
+    const zero = { ...ok, splitType: 'exact' as const, amountMinor: 1000, shares: ok.shares.slice(0, 2).map((s, i) => ({ ...s, input: i ? 0 : 10, amountMinor: i ? 0 : 1000 })) };
+    await rejects(svc.expenses.create(zero), 'validation_error', 'Everyone in the split needs an amount above 0');
     await actAs(svc, 'u_meera');
     await rejects(svc.expenses.create(ok), 'not_found'); // Meera is not in Goa Trip
   });
@@ -371,6 +421,40 @@ describe('settlements', () => {
     await actAs(svc, 'u_swetha');
     await rejects(svc.settlements.cancel(third.id), 'forbidden', /confirmed/i);
     expect(await svc.settlements.payees('sp_flat')).toEqual([]);
+  });
+
+  it('payees show what is owed and the most left to record (owed less pending)', async () => {
+    const { svc } = make();
+    await signInAs(svc, 'swetha.i');
+    await svc.settlements.create({ spaceId: 'sp_flat', toUserId: 'u_rohan', amountMinor: 12000 });
+    expect(await svc.settlements.payees('sp_flat')).toEqual([expect.objectContaining({ owedMinor: 30000, maxMinor: 18000 })]);
+  });
+
+  it('a balance with someone who left stays visible and can be settled with them', async () => {
+    const { svc } = make();
+    const space = await tripWithSwetha(svc);
+    const dinner = await svc.expenses.create(expenseInput(space.id, 'u_kabir', 30000, ['u_kabir', 'u_swetha']));
+    await actAs(svc, 'u_swetha'); // Swetha pays her 150, Kabir confirms, she leaves
+    const back = await svc.settlements.create({ spaceId: space.id, toUserId: 'u_kabir', amountMinor: 15000 });
+    await actAs(svc, 'u_kabir');
+    await svc.settlements.confirm(back.id);
+    await actAs(svc, 'u_swetha');
+    await svc.spaces.leave(space.id);
+
+    await actAs(svc, 'u_kabir');
+    await svc.expenses.remove(dinner.id); // her payment now has nothing to pay for: Kabir owes it back
+    const { balance } = await svc.spaces.get(space.id);
+    expect(balance.pairs).toEqual([{ userId: 'u_swetha', name: 'Swetha Iyer', netMinor: -15000 }]);
+    expect(balance).toMatchObject({ netMinor: -15000, settled: false, counterpartyName: 'Swetha Iyer' });
+    expect(await svc.settlements.payees(space.id)).toEqual([expect.objectContaining({ user: expect.objectContaining({ id: 'u_swetha' }), owedMinor: 15000, maxMinor: 15000 })]);
+    const refund = await svc.settlements.create({ spaceId: space.id, toUserId: 'u_swetha', amountMinor: 15000 });
+    await rejects(svc.settlements.create({ spaceId: space.id, toUserId: 'u_arun', amountMinor: 100 }), 'not_found'); // never in the space
+
+    await actAs(svc, 'u_swetha'); // she is out of the space but can still answer the payment
+    expect((await svc.notifications.list())[0]).toMatchObject({ type: 'payment_to_confirm', refId: refund.id, needsAnswer: true });
+    await svc.settlements.confirm(refund.id);
+    await actAs(svc, 'u_kabir');
+    expect((await svc.spaces.get(space.id)).balance).toMatchObject({ pairs: [], settled: true });
   });
 
   it('settlement detail returns both people and only to members of the space', async () => {
@@ -531,6 +615,13 @@ describe('auth', () => {
     expect(await svc.spaces.list()).toEqual([]); // empty state for a new user
     expect((await svc.profile.getPreferences()).defaultCurrency).toBe('INR'); // from the +91 phone
     await svc.auth.signOut();
+    for (const [phone, currency] of [['+14165550123', 'CAD'], ['+12025550123', 'USD']]) {
+      // +1 is shared: the number itself says Canada or the US
+      const other = await svc.auth.signUp({ ...input, username: `n${currency.toLowerCase()}`, phone });
+      await svc.auth.verifySignUpOtp(other.pendingId, '123456');
+      expect((await svc.profile.getPreferences()).defaultCurrency).toBe(currency);
+      await svc.auth.signOut();
+    }
     expect(await svc.auth.signIn('newbie_1', 'abcd1234')).toMatchObject({ id: user.id });
 
     await rejects(svc.auth.signUp({ ...input, username: 'kabir.r' }), 'username_taken', 'Username already taken');

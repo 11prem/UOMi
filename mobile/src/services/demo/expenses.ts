@@ -27,6 +27,7 @@ export function makeExpenses(c: Ctx): Services['expenses'] {
     if (!split.valid || split.amounts.some((a, k) => a.amountMinor !== i.shares[k].amountMinor)) {
       throw c.invalid('shares', 'The split doesn’t add up to the total');
     }
+    if (split.amounts.some((a) => a.amountMinor === 0)) throw c.invalid('shares', 'Everyone in the split needs an amount above 0'); // no ₹0 shares to answer
     return { description, amountMinor: i.amountMinor, paidBy: i.paidBy, splitType: i.splitType, date: i.date, rows, amounts: split.amounts };
   }
 

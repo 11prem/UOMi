@@ -29,7 +29,7 @@ export function formatMoney(
   currency: Currency,
   opts: { compact?: boolean; signed?: boolean } = {},
 ): string {
-  const { symbol, locale } = CURRENCY_INFO[currency];
+  const { symbol, locale } = CURRENCY_INFO[currency] ?? { symbol: currency, locale: 'en-US' }; // a code this app doesn't know: "JPY 12.34"
   const abs = Math.abs(minor);
   const digits = opts.compact && abs % 100 === 0 ? 0 : 2;
   const sym = symbol.length > 1 ? `${symbol} ` : symbol;
@@ -38,9 +38,18 @@ export function formatMoney(
 
 const MAX_MINOR = 999_999_999;
 
+/**
+ * An amount field's text with its commas read: a comma before the last 1–2 digits is a decimal comma ("12,50" → "12.50");
+ * any other comma groups digits ("1,00,000" → "100000"). Done when the text is read, never per keystroke, where a typed
+ * "1," would turn into "1." before the "000" arrives.
+ */
+export function resolveCommas(text: string): string {
+  return text.trim().replace(/,(\d{1,2})$/, '.$1').replace(/,/g, '');
+}
+
 /** What a user typed into an amount field, as minor units. Null unless 0 < amount <= 9,999,999.99 with at most 2 decimals. */
 export function parseAmountInput(text: string): number | null {
-  const m = /^(\d*)(?:\.(\d{0,2}))?$/.exec(text.trim());
+  const m = /^(\d*)(?:\.(\d{0,2}))?$/.exec(resolveCommas(text));
   if (!m || (!m[1] && !m[2])) return null;
   const minor = Number(m[1] || 0) * 100 + Number((m[2] ?? '').padEnd(2, '0'));
   return minor > 0 && minor <= MAX_MINOR ? minor : null;

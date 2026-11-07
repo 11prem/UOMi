@@ -6,10 +6,15 @@ const num = (x: number | null) => (x != null && Number.isFinite(x) ? x : 0);
 const floors = (total: number, weights: number[], denom: number) =>
   weights.map((w) => Math.floor((total * w) / denom)); // integer maths: no float drift at the unit boundary
 
-/** Splits `total` by `weights` (summing to `denom`), handing leftover units out one at a time in row order. */
+/** Splits `total` by `weights` (summing to `denom`), handing leftover units out one at a time in row order, never to a 0 weight. */
 function distribute(total: number, weights: number[], denom: number): number[] {
   const out = floors(total, weights, denom);
-  for (let i = 0, left = total - sum(out); left > 0; i = (i + 1) % out.length, left--) out[i]++;
+  for (let i = 0, left = total - sum(out); left > 0; i = (i + 1) % out.length) {
+    if (weights[i] > 0) {
+      out[i]++;
+      left--;
+    }
+  }
   return out;
 }
 

@@ -1,3 +1,4 @@
+import { parsePhoneNumberFromString } from 'libphonenumber-js/mobile';
 import { COUNTRIES, maskPhone } from '../../domain/phone';
 import type { User } from '../../domain/types';
 import { AppError } from '../errors';
@@ -21,8 +22,11 @@ type SignUp = Otp & { username: string; name: string; phone: string; password: s
 type Reset = Otp & { userId: string };
 
 const byDialLength = [...COUNTRIES].sort((a, b) => b.dial.length - a.dial.length);
-/** The country a stored E.164 number belongs to (the longest matching dial code). */
-export const countryOf = (phone: string) => byDialLength.find((c) => phone.startsWith(c.dial));
+/** The country a stored E.164 number belongs to: libphonenumber tells +1 Canada from the US; else the longest dial code. */
+export const countryOf = (phone: string) => {
+  const code = parsePhoneNumberFromString(phone)?.country;
+  return COUNTRIES.find((c) => c.code === code) ?? byDialLength.find((c) => phone.startsWith(c.dial));
+};
 
 export function makeAuth(c: Ctx): Services['auth'] {
   // Pending codes live only in memory: leaving before verifying creates nothing and frees the username and phone.

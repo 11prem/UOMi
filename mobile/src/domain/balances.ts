@@ -34,7 +34,10 @@ export function pairwise(expenses: Expense[], settlements: Settlement[]): Map<st
 
 const inSpace = <T extends { spaceId: string }>(space: Space, rows: T[]) => rows.filter((r) => r.spaceId === space.id);
 
-/** The viewer's balance in one space. Pairs cover every other member, in member order, zero pairs included. */
+/**
+ * The viewer's balance in one space. Pairs cover every other member, in member order, zero pairs included, then anyone
+ * who has left with a balance still open (a deleted expense can reopen it), so it can still be seen and settled.
+ */
 export function spaceBalance(
   space: Space,
   expenses: Expense[],
@@ -43,13 +46,17 @@ export function spaceBalance(
   nameOf: (id: string) => string,
 ): SpaceBalance {
   const owes = pairwise(inSpace(space, expenses), inSpace(space, settlements));
-  const pairs: Pair[] = space.memberIds
-    .filter((id) => id !== viewerId)
-    .map((userId) => ({
-      userId,
-      name: nameOf(userId),
-      netMinor: (owes.get(pairKey(userId, viewerId)) ?? 0) - (owes.get(pairKey(viewerId, userId)) ?? 0),
-    }));
+  const others = space.memberIds.filter((id) => id !== viewerId);
+  for (const key of owes.keys()) {
+    const [a, b] = key.split('>');
+    const other = a === viewerId ? b : b === viewerId ? a : null;
+    if (other && !others.includes(other)) others.push(other);
+  }
+  const pairs: Pair[] = others.map((userId) => ({
+    userId,
+    name: nameOf(userId),
+    netMinor: (owes.get(pairKey(userId, viewerId)) ?? 0) - (owes.get(pairKey(viewerId, userId)) ?? 0),
+  }));
   const open = pairs.filter((p) => p.netMinor !== 0);
   const netMinor = sum(pairs.map((p) => p.netMinor));
   // The people on the side of the net; nobody when it is 0 (open pairs are never 0, so no sign matches).
@@ -78,7 +85,7 @@ export function overall(balances: SpaceBalance[]): OverallLine[] {
     line.netMinor = line.owedMinor - line.oweMinor;
     by.set(b.currency, line);
   }
-  return [...by.values()].filter((l) => l.oweMinor !== 0 || l.owedMinor !== 0);
+  return [...by.values()].filter((l) => l.oweMinor !== 0 || l.owedMinor !== 0).sort((a, b) => (a.currency < b.currency ? -1 : 1)); // code order, as the backend
 }
 
 /** The most `fromId` can record paying `toId` now: what they owe, minus payments to them still awaiting an answer (specs § 9). */

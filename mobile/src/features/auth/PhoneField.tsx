@@ -68,7 +68,8 @@ export function PhoneField({ label, required, helper, error, success, country, o
         <TextInput
           ref={ref}
           accessibilityLabel={label}
-          aria-invalid={!!error}
+          aria-invalid={!!error} // web only; on a phone the hint carries the error
+          accessibilityHint={error || undefined}
           keyboardType="phone-pad"
           autoComplete="tel"
           textContentType="telephoneNumber"

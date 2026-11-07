@@ -37,7 +37,8 @@ export function TextField({ label, required, helper, error, success, left, right
         <TextInput
           ref={ref}
           accessibilityLabel={label}
-          aria-invalid={!!error}
+          aria-invalid={!!error} // web only; on a phone the hint carries the error
+          accessibilityHint={error || undefined}
           placeholderTextColor={colors.ink2}
           selectionColor={colors.selection}
           cursorColor={colors.carbon}

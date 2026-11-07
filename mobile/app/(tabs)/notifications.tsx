@@ -46,7 +46,7 @@ export default function Notifications() {
   const earlier = all?.filter((n) => !n.needsAnswer && !peeling.includes(n.id)) ?? [];
 
   return (
-    <Screen tabs header={<OfflineBanner />}>
+    <Screen tabs header={<OfflineBanner />} onRefresh={refresh}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: space.s2 }}>
         <Text accessibilityRole="header" style={[type.display, { color: colors.ink, paddingTop: space.s1, paddingBottom: space.s4 }]}>
           Notifications

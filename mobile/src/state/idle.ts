@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
+import { focusManager } from '@tanstack/react-query';
 import { defaultTokenStore } from '../services/server/tokens';
 import { lastActivityAt, onActivity } from './activity';
 import { currentServices, useSession } from './session';
@@ -9,6 +10,23 @@ export { markActivity } from './activity';
 const IDLE_MESSAGE = 'You were signed out after 10 minutes of inactivity.';
 const MARGIN_SECONDS = 30; // the same margin `auth.restore()` uses on launch
 const DEFAULT_IDLE_SECONDS = 600; // the backend's default, until the stored tokens say otherwise
+
+let checkNow = () => {}; // the mounted idle timer's check; nothing to check while it isn't watching
+
+/**
+ * Coming back to the foreground refetches what is on screen (TanStack's focus refetch; a phone has no window focus event of
+ * its own). The idle check runs first, so an expired session signs out to Sign In, and clears the cache, before anything
+ * refetches with it. Called once, at module scope, by the root layout.
+ */
+export function refetchOnForeground() {
+  focusManager.setEventListener((setFocused) => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkNow();
+      setFocused(state === 'active');
+    });
+    return () => sub.remove();
+  });
+}
 
 /**
  * Server mode only: signs out `idleSeconds − 30` after the last successful request, to Sign In (design § 4.4);
@@ -37,6 +55,7 @@ export function useIdleSignOut() {
     }
 
     check();
+    checkNow = check;
     // The server's own limit comes with the tokens (`idle_timeout_seconds`).
     defaultTokenStore()
       .get()
@@ -50,6 +69,7 @@ export function useIdleSignOut() {
     const sub = AppState.addEventListener('change', (state) => state === 'active' && check());
     return () => {
       done = true;
+      checkNow = () => {};
       clearTimeout(timer);
       stopActivity();
       sub.remove();

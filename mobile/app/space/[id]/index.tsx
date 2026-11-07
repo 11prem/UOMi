@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ActivityList } from '../../../src/features/space/ActivityList';
 import { BalanceSheet } from '../../../src/features/space/BalanceSheet';
@@ -24,6 +24,7 @@ export default function SpacePage() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { space, type } = useTheme();
   const services = useServices();
+  const queryClient = useQueryClient();
   const meId = useSession((s) => s.user?.id ?? '');
   const q = useQuery({ queryKey: qk.space(id), queryFn: () => services.spaces.get(id) });
   const d = q.data;
@@ -72,6 +73,7 @@ export default function SpacePage() {
           </>
         }
         fab={d && <Fab icon="plus" label="Add expense" onPress={() => router.push(`/space/${id}/expense-new`)} />}
+        onRefresh={() => queryClient.invalidateQueries({ queryKey: qk.space(id) })}
       >
         {body}
       </Screen>

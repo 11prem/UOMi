@@ -50,7 +50,7 @@ export default function SettleUp() {
   const value = parseAmountInput(amountText);
   const typed = hundredths(amountText);
   let error: string | undefined;
-  if (payee && typed !== null && typed > max) error = `That’s more than you owe ${firstName(payee.user.name)}`;
+  if (payee && typed !== null && typed > max) error = `That’s more than what’s left to pay ${firstName(payee.user.name)}`;
   else if (payee && value === null) error = 'Enter an amount above 0';
   const leave = useDiscardGuard((picked !== null && picked !== preset) || (text !== null && text !== full));
 

@@ -63,8 +63,8 @@ export interface Services {
   };
   settlements: {
     get(id: string): Promise<{ settlement: Settlement; space: Space; from: User; to: User }>;
-    /** The people the viewer owes in this space, with the most they can record paying each now. */
-    payees(spaceId: string): Promise<{ user: User; maxMinor: number }[]>;
+    /** The people the viewer owes in this space: what they owe each (`owedMinor`) and the most they can record paying now. */
+    payees(spaceId: string): Promise<{ user: User; owedMinor: number; maxMinor: number }[]>;
     create(i: { spaceId: string; toUserId: string; amountMinor: number }): Promise<Settlement>;
     confirm(id: string): Promise<void>;
     reject(id: string): Promise<void>;

@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import type { AppNotification } from '../../domain/types';
 import { useServices } from '../../services/useServices';
+import { answerFailed } from '../notifications/model';
 import { useTheme } from '../../theme/ThemeProvider';
 import { CarbonCopy } from '../../ui/CarbonCopy';
 import { IconButton } from '../../ui/IconButton';
@@ -53,7 +54,8 @@ export function HomeCard({ notifications }: { notifications: AppNotification[] }
       {!!sub && <Text style={[type.label, { color: colors.ink2, marginTop: space.s1 }]}>{sub}</Text>}
     </Press>
   );
-  if (!n.needsAnswer && !leaving) return <Sheet perf padded style={bill}>{body}</Sheet>;
+  // A card with no ref has nothing to answer (the item has lost its id): plain, without ✕ / ✓.
+  if ((!n.needsAnswer || !n.refId) && !leaving) return <Sheet perf padded style={bill}>{body}</Sheet>;
 
   const pay = n.type === 'payment_to_confirm';
   const what = pay ? 'payment' : 'share';
@@ -65,7 +67,7 @@ export function HomeCard({ notifications }: { notifications: AppNotification[] }
       if (pay) await (yes ? services.settlements.confirm(n.refId) : services.settlements.reject(n.refId));
       else await (yes ? services.expenses.acceptShare(n.refId) : services.expenses.rejectShare(n.refId));
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Something went wrong. Your data is safe.');
+      answerFailed(e, n, services, queryClient);
       return setBusy(false);
     }
     // Now, not when the peel ends: Back or a tab switch mid-peel can unmount this before `gone` runs, and the toast and refresh would be lost.

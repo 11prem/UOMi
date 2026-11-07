@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { monthKey, relDate } from '../domain/dates';
 import type { User } from '../domain/types';
-import { notOnServer } from '../services/errors';
+import { AppError, notOnServer } from '../services/errors';
 import { qk, queryClient } from '../services/queries';
 import { currentServices } from '../services/useServices';
 import { useSession } from '../state/session';
@@ -80,6 +80,15 @@ const openDebug = async () => {
 };
 
 describe('Notifications', () => {
+  it('pull to refresh reloads the list', async () => {
+    await openApp('/notifications');
+    expect(await screen.findByLabelText(`Accept share: ${TOIT}`)).toBeTruthy();
+    const list = jest.spyOn(currentServices().notifications, 'list');
+    const refresh = screen.container.queryAll((n) => n.type === 'RCTScrollView' && !!n.props.refreshControl)[0].props.refreshControl.props;
+    await act(async () => refresh.onRefresh());
+    await waitFor(() => expect(list).toHaveBeenCalled());
+  });
+
   it('mark all as read clears badge', async () => {
     await openApp();
     await openTab(/^Notifications/);
@@ -166,6 +175,29 @@ describe('Notifications', () => {
     expect(screen.getByLabelText(`Accept share: ${TOIT}`)).toBeTruthy();
   });
 
+  it('an answer to something already answered or removed marks the card read, refreshes and says so', async () => {
+    const s = currentServices();
+    const toit = (await s.notifications.list()).find((x) => x.refId === 'e_toit')!;
+    jest.spyOn(s.expenses, 'acceptShare').mockRejectedValue(new AppError('not_found', 'Expense not found'));
+    const markRead = jest.spyOn(s.notifications, 'markRead');
+    await openApp('/notifications');
+    await fireEvent.press(await screen.findByLabelText(`Accept share: ${TOIT}`));
+    expect(await screen.findByText('This was already answered or removed')).toBeTruthy();
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith(toit.id));
+    expect(await screen.findByRole('tab', { name: 'Notifications, 2 unread' })).toBeTruthy(); // refreshed: it reads itself
+  });
+
+  it('a needs-answer card that has lost what it is about has no ✕ / ✓', async () => {
+    const s = currentServices();
+    const list = await s.notifications.list();
+    jest.spyOn(s.notifications, 'list').mockResolvedValue(list.map((x) => (x.refId === 'e_toit' ? { ...x, refId: null } : x)));
+    await openApp('/notifications');
+    expect(await screen.findByLabelText(`Confirm payment: ${PRIYA}`)).toBeTruthy();
+    expect(screen.getByText(TOIT)).toBeTruthy();
+    expect(screen.queryByLabelText(`Accept share: ${TOIT}`)).toBeNull();
+    expect(screen.queryByLabelText(`Reject share: ${TOIT}`)).toBeNull();
+  });
+
   it('empty: "No notifications yet"', async () => {
     await currentServices().auth.signIn('rohan.d', 'demo1234'); // seeded with none
     await openApp('/notifications');
@@ -227,6 +259,17 @@ describe('Transactions', () => {
     expect(await screen.findByLabelText(/^You paid Priya/)).toBeTruthy();
     expect(screen.getByLabelText('Filter by space, All spaces')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'All' })).toBeSelected();
+  });
+
+  it('a filtered space the viewer has left goes back to All spaces', async () => {
+    await openApp('/transactions');
+    await fireEvent.press(await screen.findByLabelText('Filter by space, All spaces'));
+    await fireEvent.press(await screen.findByRole('radio', { name: 'Office lunches' }));
+    expect(await screen.findByLabelText('Filter by space, Office lunches')).toBeTruthy();
+    await currentServices().spaces.leave('sp_office'); // settled up, not the owner
+    await act(async () => queryClient.invalidateQueries());
+    expect(await screen.findByLabelText('Filter by space, All spaces')).toBeTruthy();
+    expect(await screen.findByLabelText(/^Airport taxi/)).toBeTruthy(); // every space's rows again
   });
 
   it('empty: "No transactions yet"', async () => {

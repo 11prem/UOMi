@@ -189,6 +189,28 @@ describe('Busy FABs (item 6)', () => {
   });
 });
 
+describe('Busy FAB on Edit profile', () => {
+  it('Save profile shows a spinner while the profile is saved', async () => {
+    const g = gate();
+    const { update } = currentServices().profile;
+    jest.spyOn(currentServices().profile, 'update').mockImplementation(async (p) => {
+      await g.opened;
+      return update(p);
+    });
+    const r = await open('/profile', '/profile-edit');
+    await fireEvent.changeText(await screen.findByLabelText('Name'), 'Kabir R. Rao');
+    const press = fireEvent.press(screen.getByLabelText('Save profile'));
+    await settle();
+    expect(screen.getByLabelText('Save profile')).toBeBusy();
+    expect(screen.getByLabelText('Save profile')).toBeDisabled();
+    await act(async () => {
+      g.release();
+      await press;
+    });
+    await waitFor(() => expect(r.getPathname()).toBe('/profile'));
+  });
+});
+
 describe('Home card answer (item 7)', () => {
   it('toasts and refreshes as soon as the answer is saved, even if Home goes before the peel ends', async () => {
     const r = await open();

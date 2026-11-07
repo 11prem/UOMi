@@ -241,6 +241,60 @@ describe('sign in, restore, sign out', () => {
   });
 });
 
+describe('signing out while requests are in flight', () => {
+  it('signOut clears the tokens before /auth/logout answers, and a refresh that lands later writes nothing back', async () => {
+    let finishRefresh!: () => void;
+    let finishLogout!: () => void;
+    const { svc, store, onSignedOut } = make(async (c) => {
+      if (c.path === '/auth/refresh') {
+        await new Promise<void>((resolve) => (finishRefresh = resolve));
+        return { body: pair(2) };
+      }
+      if (c.path === '/auth/logout') {
+        await new Promise<void>((resolve) => (finishLogout = resolve));
+        return { status: 204 };
+      }
+      return fail(401, 'token_expired', 'Access token expired.');
+    });
+    const list = rejects(svc.spaces.list(), 'session_expired');
+    await sleep(5); // the refresh is now waiting for the server
+    await svc.auth.signOut(); // resolves without waiting for /auth/logout
+    expect(store.value).toBeNull();
+    finishRefresh();
+    await list;
+    finishLogout();
+    await sleep(5);
+    expect(store.value).toBeNull();
+    expect(await svc.auth.restore()).toBeNull();
+    expect(onSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('a late session_expired for the previous user does not sign out the next one', async () => {
+    let finishOld!: () => void;
+    const { svc, store, onSignedOut } = make(
+      async (c) => {
+        if (c.path === '/auth/login') return { body: pair(2) };
+        if (c.path === '/auth/logout') return { status: 204 };
+        if (bearer(c) === 'Bearer access-1') {
+          await new Promise<void>((resolve) => (finishOld = resolve));
+          return fail(401, 'session_expired', 'You were signed out after 10 minutes of inactivity.');
+        }
+        return { body: c.path === '/users/me' ? ME : HOME };
+      },
+      memoryStore(tokens(1)),
+    );
+    const old = rejects(svc.spaces.list(), 'session_expired'); // sent with the first user's token
+    await sleep(5);
+    await svc.auth.signOut();
+    await svc.auth.signIn('kabir.r', 'demo1234');
+    finishOld();
+    await old;
+    expect(onSignedOut).not.toHaveBeenCalled();
+    expect(store.value).toMatchObject({ access: 'access-2' });
+    expect(await svc.spaces.list()).toHaveLength(3);
+  });
+});
+
 describe('the session', () => {
   it('single-flight refresh: parallel token_expired makes one /auth/refresh and retries each request once', async () => {
     let valid = 'access-0'; // the stored access-1 is already expired
@@ -490,6 +544,19 @@ describe('spaces', () => {
     const detail = { ...GOA, expenses: [expense(20, 'Free', 1000, ARUN, '2026-11-01', 0)] };
     const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : detail }));
     expect(Object.is((await svc.spaces.get('2')).activity.find((a) => a.kind === 'expense')!.myPartMinor, 0)).toBe(true);
+  });
+
+  it('keeps the viewer’s open pair with someone who has left, after the members', async () => {
+    const ROHAN = person('rohan.d', 'Rohan Das'); // not a member any more
+    const pairwise = [...GOA.pairwise, { debtor: KABIR, creditor: ROHAN, amount_minor: 5000 }];
+    const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : { ...GOA, balance_minor: 145000, pairwise } }));
+    const { balance } = await svc.spaces.get('2');
+    expect(balance.pairs.map((p) => [p.userId, p.netMinor])).toEqual([
+      ['arun.n', -300000],
+      ['priya.m', 450000],
+      ['rohan.d', -5000],
+    ]);
+    expect(balance.openBalances).toBe(3);
   });
 
   it('a space where every pair is zero is settled with no counterparty', async () => {

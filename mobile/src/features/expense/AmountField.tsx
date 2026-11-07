@@ -47,6 +47,7 @@ export function AmountField({ label, currency, required, helper, error, onChange
           ref={ref}
           accessibilityLabel={label}
           aria-invalid={!!error}
+          accessibilityHint={error || undefined}
           inputMode="decimal"
           keyboardType="decimal-pad"
           placeholder="0"
@@ -54,7 +55,7 @@ export function AmountField({ label, currency, required, helper, error, onChange
           selectionColor={colors.selection}
           cursorColor={colors.carbon}
           maxFontSizeMultiplier={FONT_CAP}
-          maxLength={10 /* 9999999.99, the per-expense limit */}
+          maxLength={12 /* 99,99,999.99, the per-expense limit with grouping commas */}
           {...input}
           onChangeText={(t) => onChangeText(cleanDecimal(t))}
           onFocus={(e) => {

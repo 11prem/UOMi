@@ -172,6 +172,18 @@ describe('spaceBalance', () => {
     expect(b.settled).toBe(false);
   });
 
+  it('keeps an open pair with someone who left, after the members; a settled one is dropped', () => {
+    const left = mkSpace('s1', 'INR', ['me', 'sw']); // ar has left
+    const b = spaceBalance(left, [mkExpense('s1', 'me', [mkShare('ar', 500)]), mkExpense('s1', 'sw', [mkShare('me', 300)])], [], 'me', nameOf);
+    expect(b.pairs).toEqual([
+      { userId: 'sw', name: 'Swetha Iyer', netMinor: -300 },
+      { userId: 'ar', name: 'Arun Nair', netMinor: 500 },
+    ]);
+    expect(b).toMatchObject({ netMinor: 200, openBalances: 2, settled: false });
+    const paid = mkSettlement('s1', 'ar', 'me', 500, 'confirmed');
+    expect(spaceBalance(left, [mkExpense('s1', 'me', [mkShare('ar', 500)])], [paid], 'me', nameOf).pairs).toEqual([{ userId: 'sw', name: 'Swetha Iyer', netMinor: 0 }]);
+  });
+
   it('ignores other spaces’ expenses and settlements', () => {
     const b = balance(
       [mkExpense('other', 'sw', [mkShare('me', 1000)])],
@@ -198,6 +210,10 @@ describe('overall', () => {
       { currency: 'INR', netMinor: -500, oweMinor: 2000, owedMinor: 1500 },
       { currency: 'USD', netMinor: 3500, oweMinor: 0, owedMinor: 3500 },
     ]);
+  });
+
+  it('lists the currencies in code order, as the backend does', () => {
+    expect(overall([bal('USD', 100), bal('AED', 100), bal('INR', 100)]).map((l) => l.currency)).toEqual(['AED', 'INR', 'USD']);
   });
 
   it('lists only currencies with something owed or owing', () => {

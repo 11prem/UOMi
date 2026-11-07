@@ -81,7 +81,7 @@ export function EditProfileForm({ user }: { user: User }) {
           <AppBar title="Edit profile" />
           <OfflineBanner />
         </>
-      } fab={<Fab icon="check" label="Save profile" onPress={() => void save()} disabled={saving} />}>
+      } fab={<Fab icon="check" label="Save profile" onPress={() => void save()} busy={saving} />}>
       <View style={{ gap: space.s3, paddingTop: space.s2 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s4, paddingBottom: space.s2 }}>
           <MemberPlate user={{ name: clean || user.name, plate: user.plate, avatarUrl: avatar }} lg />

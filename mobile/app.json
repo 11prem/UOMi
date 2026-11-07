@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.uomi.app",
+      "versionCode": 1,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -33,6 +34,7 @@
       ],
       "expo-font",
       "expo-secure-store",
+      ["expo-image-picker", { "microphonePermission": false }],
       ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }],
       "./plugins/withAndroidReleaseBuild"
     ]

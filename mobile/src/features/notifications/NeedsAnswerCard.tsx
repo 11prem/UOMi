@@ -10,7 +10,7 @@ import { Press } from '../../ui/Press';
 import { Sheet } from '../../ui/Sheet';
 import { Stamp } from '../../ui/Stamp';
 import { toast } from '../../ui/Toast';
-import { subOf } from './model';
+import { answerFailed, subOf } from './model';
 
 /**
  * A notification that needs an answer (app.js `pendingCard`), as on Home: a carbon-copied bill with ✕ / ✓. Tapping the
@@ -38,7 +38,7 @@ export function NeedsAnswerCard({ n, onOpen, onLeaving }: { n: AppNotification; 
       if (pay) await (yes ? services.settlements.confirm(n.refId) : services.settlements.reject(n.refId));
       else await (yes ? services.expenses.acceptShare(n.refId) : services.expenses.rejectShare(n.refId));
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Something went wrong. Your data is safe.');
+      answerFailed(e, n, services, queryClient);
       return setBusy(false);
     }
     // Now, not when the peel ends: a refetch or Back mid-peel can unmount this before `gone` runs, and the toast and refresh would be lost.
@@ -66,10 +66,13 @@ export function NeedsAnswerCard({ n, onOpen, onLeaving }: { n: AppNotification; 
           <Text style={[type.body, { color: colors.ink }]}>{n.message}</Text>
           {!!sub && <Text style={[type.label, { color: colors.ink2, marginTop: space.s1 }]}>{sub}</Text>}
         </Press>
-        <View style={{ paddingTop: space.s2 + 2, flexDirection: 'row', gap: space.s2, justifyContent: 'flex-end' }}>
-          <IconButton variant="reject" icon="x" iconSize="sm" label={`Reject ${what}: ${n.message}`} onPress={() => void answer(false)} disabled={busy} />
-          <IconButton variant="accept" icon="check" iconSize="sm" label={`${pay ? 'Confirm' : 'Accept'} ${what}: ${n.message}`} onPress={() => void answer(true)} disabled={busy} />
-        </View>
+        {/* Without a ref there is nothing to answer (the item has lost its id): no ✕ / ✓. */}
+        {!!n.refId && (
+          <View style={{ paddingTop: space.s2 + 2, flexDirection: 'row', gap: space.s2, justifyContent: 'flex-end' }}>
+            <IconButton variant="reject" icon="x" iconSize="sm" label={`Reject ${what}: ${n.message}`} onPress={() => void answer(false)} disabled={busy} />
+            <IconButton variant="accept" icon="check" iconSize="sm" label={`${pay ? 'Confirm' : 'Accept'} ${what}: ${n.message}`} onPress={() => void answer(true)} disabled={busy} />
+          </View>
+        )}
         {leaving !== null && (
           <Stamp
             land

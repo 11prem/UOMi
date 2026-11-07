@@ -1,6 +1,10 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { relDate } from '../../domain/dates';
 import type { AppNotification } from '../../domain/types';
+import { AppError } from '../../services/errors';
+import type { Services } from '../../services/types';
 import type { IconName } from '../../ui/Icon';
+import { toast } from '../../ui/Toast';
 
 /** Where a tap on a notification goes (specs § 11.1; app.js `openNotif`). Null: nowhere. Branches on `type`, never on `spaceId`. */
 export function targetOf(n: AppNotification): string | null {
@@ -52,4 +56,20 @@ export function groupByDay(rows: AppNotification[]): { key: number; label: strin
     else groups.push({ key, label: relDate(n.createdAt), items: [n] });
   }
   return groups;
+}
+
+/**
+ * An answer to a needs-answer card (Home or Notifications) that the service refused. `not_found`: it was already answered
+ * or removed, so the card is marked read and the lists refresh. Anything else is only shown.
+ */
+export function answerFailed(e: unknown, n: AppNotification, services: Services, queryClient: QueryClient) {
+  if (e instanceof AppError && e.code === 'not_found') {
+    toast('This was already answered or removed');
+    void services.notifications
+      .markRead(n.id)
+      .catch(() => {})
+      .finally(() => queryClient.invalidateQueries());
+    return;
+  }
+  toast(e instanceof Error ? e.message : 'Something went wrong. Your data is safe.');
 }

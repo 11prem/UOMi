@@ -1,11 +1,14 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider } from '../../theme/ThemeProvider';
 import { Fab } from '../Fab';
 import { MemberPlate } from '../MemberPlate';
 import { OtpInput } from '../OtpInput';
 import { Stamp } from '../Stamp';
 import { TextField } from '../TextField';
+import { COUNTRIES } from '../../domain/phone';
+import { PhoneField } from '../../features/auth/PhoneField';
 
 // Screens always put kit parts inside a host view; RNTL's label queries miss a TextInput whose only host ancestor is the field.
 const inTheme = (ui: React.ReactElement) =>
@@ -61,6 +64,27 @@ describe('OtpInput', () => {
     await fireEvent.changeText(input, pasted);
     expect(onChange).toHaveBeenLastCalledWith('123456');
     expect(onComplete).toHaveBeenCalledWith('123456');
+  });
+});
+
+describe('error hints (aria-invalid is web only)', () => {
+  it('a field with an error reads it out as its hint; without one there is none', async () => {
+    const { rerender } = await inTheme(<TextField label="Username" error="Username already taken" />);
+    expect(screen.getByLabelText('Username').props.accessibilityHint).toBe('Username already taken');
+    await rerender(
+      <ThemeProvider>
+        <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } }}>
+          <View>
+            <TextField label="Username" />
+            <PhoneField label="Phone number" value="" country={COUNTRIES[0]} onCountry={() => {}} error="Enter a valid mobile number" />
+            <OtpInput value="" onChange={() => {}} error="That code is wrong" />
+          </View>
+        </SafeAreaProvider>
+      </ThemeProvider>,
+    );
+    expect(screen.getByLabelText('Username').props.accessibilityHint).toBeUndefined();
+    expect(screen.getByLabelText('Phone number').props.accessibilityHint).toBe('Enter a valid mobile number');
+    expect(screen.getByLabelText('6-digit code').props.accessibilityHint).toBe('That code is wrong');
   });
 });
 

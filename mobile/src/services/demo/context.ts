@@ -23,12 +23,18 @@ export function createContext(storage: Storage, opts: DemoOptions = {}) {
   const delay = opts.delay ?? process.env.NODE_ENV !== 'test';
   const flags = { simulateErrors: false, offline: false };
   let db: DemoDb;
-  const ready = loadDb(storage, now()).then((loaded) => {
-    db = loaded;
-  });
+  let canSave = true; // false for a run on sample data because the stored data couldn't be read: it must survive
+  let lastSaveFailed = false;
 
   let saving: Promise<void> = Promise.resolve(); // saves run one after another, so the last write wins
-  const save = () => (saving = saving.then(() => saveDb(storage, db)));
+  const save = () =>
+    (saving = saving.then(async () => {
+      if (canSave) lastSaveFailed = !(await saveDb(storage, db));
+    }));
+  const ready = loadDb(storage, now()).then((loaded) => {
+    ({ db, canSave } = loaded);
+    if (loaded.fresh) return save();
+  });
 
   async function run<T>(kind: Kind, fn: () => T, saveAfter: boolean): Promise<T> {
     await ready;
@@ -70,10 +76,11 @@ export function createContext(storage: Storage, opts: DemoOptions = {}) {
     if (!expense || !s || !s.memberIds.includes(me().id)) throw notFound('Expense');
     return { expense, space: s };
   }
+  /** A payment in one of the user's spaces, or one they are part of after leaving its space (to answer a late payment). */
   function settlementOf(id: string): { settlement: Settlement; space: Space } {
     const settlement = db.settlements.find((x) => x.id === id);
     const s = settlement && space(settlement.spaceId);
-    if (!settlement || !s || !s.memberIds.includes(me().id)) throw notFound('Payment');
+    if (!settlement || !s || ![...s.memberIds, settlement.fromUserId, settlement.toUserId].includes(me().id)) throw notFound('Payment');
     return { settlement, space: s };
   }
 
@@ -146,6 +153,10 @@ export function createContext(storage: Storage, opts: DemoOptions = {}) {
     },
     set db(next: DemoDb) {
       db = next;
+    },
+    /** The last save didn't reach the device (the data is still in memory). */
+    get lastSaveFailed() {
+      return lastSaveFailed;
     },
     flags,
     now,

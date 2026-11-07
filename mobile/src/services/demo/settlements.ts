@@ -33,10 +33,11 @@ export function makeSettlements(c: Ctx): Services['settlements'] {
       c.read(() => {
         const me = c.me();
         const space = c.memberSpace(spaceId);
+        // The pairs include anyone who has left with a balance still open, so they can still be paid.
         return c
           .bal(space, me.id)
           .pairs.filter((p) => p.netMinor < 0)
-          .map((p) => ({ user: c.user(p.userId) as User, maxMinor: settleMax(space, c.db.expenses, c.db.settlements, me.id, p.userId) }))
+          .map((p) => ({ user: c.user(p.userId) as User, owedMinor: -p.netMinor, maxMinor: settleMax(space, c.db.expenses, c.db.settlements, me.id, p.userId) }))
           .filter((p) => p.maxMinor > 0); // everything already recorded and waiting for an answer: nothing left to pay
       }),
 
@@ -44,8 +45,10 @@ export function makeSettlements(c: Ctx): Services['settlements'] {
       c.write(() => {
         const me = c.me();
         const space = c.memberSpace(spaceId);
-        if (toUserId === me.id || !space.memberIds.includes(toUserId)) throw c.notFound('Person');
-        if (!(c.owes(space).get(pairKey(me.id, toUserId)) ?? 0)) throw forbidden(`You don’t owe ${c.firstOf(toUserId)} anything in this space`);
+        const owed = c.owes(space).get(pairKey(me.id, toUserId)) ?? 0;
+        // Someone who left can still be paid what the viewer owes them here.
+        if (toUserId === me.id || !c.user(toUserId) || (!space.memberIds.includes(toUserId) && !owed)) throw c.notFound('Person');
+        if (!owed) throw forbidden(`You don’t owe ${c.firstOf(toUserId)} anything in this space`);
         const max = settleMax(space, c.db.expenses, c.db.settlements, me.id, toUserId);
         if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw c.invalid('amount', 'Enter an amount greater than zero');
         if (amountMinor > max) throw c.invalid('amount', `The most you can record is ${formatMoney(max, space.currency)}`);

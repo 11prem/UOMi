@@ -162,13 +162,14 @@ export function toSpaceDetail(d: SpaceDetailDto, me: User) {
   };
   const members = d.members.map((m) => toUser(m, { position: m.position, phone: m.username === me.username ? (me.phone ?? undefined) : undefined }));
 
-  // The viewer's side of each pairwise line (+ = they owe the viewer), in member order.
+  // The viewer's side of each pairwise line (+ = they owe the viewer), in member order, then anyone who has left with a
+  // balance still open (the server lists only open pairs).
   const lines = new Map<string, Pair>();
   for (const p of d.pairwise) {
     if (p.creditor.username === me.username) lines.set(p.debtor.username, { userId: p.debtor.username, name: p.debtor.name, netMinor: p.amount_minor });
     else if (p.debtor.username === me.username) lines.set(p.creditor.username, { userId: p.creditor.username, name: p.creditor.name, netMinor: -p.amount_minor });
   }
-  const pairs = space.memberIds.flatMap((m) => lines.get(m) ?? []);
+  const pairs = [...space.memberIds.flatMap((m) => lines.get(m) ?? []), ...[...lines.values()].filter((p) => !space.memberIds.includes(p.userId))];
   const open = pairs.filter((p) => p.netMinor !== 0);
   const side = open.filter((p) => Math.sign(p.netMinor) === Math.sign(d.balance_minor)); // the people on the side of the net; nobody when it is 0
   const balance: SpaceBalance = {

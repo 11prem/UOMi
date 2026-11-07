@@ -4,13 +4,13 @@ import { AppState, BackHandler, Text } from 'react-native';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter, screen as routerScreen } from 'expo-router/testing-library';
 import { Stack, router } from 'expo-router';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider, focusManager, useQuery } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { ReactNode } from 'react';
 import type { User } from '../domain/types';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { useSession } from '../state/session';
-import { markActivity, useIdleSignOut } from '../state/idle';
+import { markActivity, refetchOnForeground, useIdleSignOut } from '../state/idle';
 import { currentServices } from '../services/useServices';
 import { qk, queryClient } from '../services/queries';
 import { TabBar } from '../ui/TabBar';
@@ -194,6 +194,49 @@ describe('session', () => {
     await act(async () => void onChange('active'));
     expect(useSession.getState().user).toBeNull();
     expect(screen.getByText('You were signed out after 10 minutes of inactivity.')).toBeTruthy();
+  });
+
+  it('coming back to the foreground refetches what is on screen, after the idle check has had its say', async () => {
+    jest.useFakeTimers({ now: 1_800_000_000_000 });
+    useSession.setState({ mode: 'server', serverUrl: 'http://x', user: KABIR });
+    markActivity();
+    const queryFn = jest.fn(async () => 'data');
+    function Screen() {
+      useIdleSignOut();
+      useQuery({ queryKey: ['probe'], queryFn, staleTime: 0 });
+      return null;
+    }
+    await render(
+      <Providers>
+        <Screen />
+      </Providers>,
+    );
+    refetchOnForeground();
+    const onChange = jest.mocked(AppState.addEventListener).mock.calls.at(-1)![1];
+    // What the focus refetch finds when it runs: is anyone signed in, and how many queries are there to refetch.
+    const atFocus: [boolean, number][] = [];
+    const setFocused = focusManager.setFocused.bind(focusManager);
+    jest.spyOn(focusManager, 'setFocused').mockImplementation((focused) => {
+      if (focused) atFocus.push([useSession.getState().user !== null, queryClient.getQueryCache().getAll().length]);
+      setFocused(focused);
+    });
+    try {
+      await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
+      await act(async () => void onChange('background'));
+      await act(async () => void onChange('active')); // a minute later: still signed in, so the screen refetches
+      await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+
+      jest.setSystemTime(Date.now() + 600_000);
+      await act(async () => void onChange('background'));
+      await act(async () => void onChange('active')); // idle too long: signed out, cache cleared, before the refetch runs
+      expect(atFocus).toEqual([
+        [true, 1],
+        [false, 0],
+      ]);
+      expect(useSession.getState()).toMatchObject({ user: null, landing: '/signin' });
+    } finally {
+      setFocused(undefined);
+    }
   });
 });
 

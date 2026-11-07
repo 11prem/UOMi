@@ -24,6 +24,10 @@ describe('formatMoney', () => {
     expect(formatMoney(150000, 'AUD')).toBe('A$ 1,500.00');
     expect(formatMoney(150000, 'CAD')).toBe('C$ 1,500.00');
   });
+
+  it('shows an unknown currency by its code instead of crashing', () => {
+    expect(formatMoney(1234, 'JPY' as never)).toBe('JPY 12.34');
+  });
 });
 
 describe('parseAmountInput', () => {
@@ -33,10 +37,12 @@ describe('parseAmountInput', () => {
     ['.5', 50],
     ['0.01', 1],
     [' 40 ', 4000],
+    ['1,000', 100000],
+    ['12,50', 1250],
     ['9999999.99', 999999999],
   ])('accepts %p', (text, minor) => expect(parseAmountInput(text)).toBe(minor));
 
-  it.each(['', ' ', '.', 'abc', '12.345', '0', '0.00', '-5', '1e3', '10000000', '1,000'])(
+  it.each(['', ' ', '.', 'abc', '12.345', '0', '0.00', '-5', '1e3', '10000000', '1,00,00,000', '12,345.678'])(
     'rejects %p',
     (text) => expect(parseAmountInput(text)).toBeNull(),
   );

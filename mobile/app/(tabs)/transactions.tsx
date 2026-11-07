@@ -37,11 +37,13 @@ function TransactionsScreen() {
   const meId = useSession((s) => s.user?.id) ?? '';
   const [kind, setKind] = useState<Kind>('all');
   const [spaceId, setSpaceId] = useState(ALL_SPACES);
+  const server = services.mode === 'server'; // the server has no transactions endpoint yet: ask it for nothing
+  const spaces = useQuery({ queryKey: qk.spaces, queryFn: () => services.spaces.list(), enabled: !server });
+  // A space the viewer has left (or that was deleted) is no longer an option: back to all spaces.
+  if (spaceId !== ALL_SPACES && spaces.data && !spaces.data.some((r) => r.space.id === spaceId)) setSpaceId(ALL_SPACES);
 
   const filter = { kind, ...(spaceId !== ALL_SPACES && { spaceId }) };
-  const server = services.mode === 'server'; // the server has no transactions endpoint yet: ask it for nothing
   const rows = useQuery({ queryKey: qk.transactions(filter), queryFn: () => services.transactions.list(filter), enabled: !server });
-  const spaces = useQuery({ queryKey: qk.spaces, queryFn: () => services.spaces.list(), enabled: !server });
   const filtered = kind !== 'all' || spaceId !== ALL_SPACES;
   const clear = () => {
     setKind('all');

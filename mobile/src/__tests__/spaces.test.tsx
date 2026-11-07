@@ -4,7 +4,7 @@ import { renderRouter, screen } from 'expo-router/testing-library';
 import { router } from 'expo-router';
 import type { Space, SpaceBalance } from '../domain/types';
 import { BalanceSheet } from '../features/space/BalanceSheet';
-import { notOnServer } from '../services/errors';
+import { AppError, notOnServer } from '../services/errors';
 import { queryClient } from '../services/queries';
 import { currentServices } from '../services/useServices';
 import { useSession } from '../state/session';
@@ -45,6 +45,8 @@ async function openHome() {
   await waitFor(() => expect(r.getPathname()).toBe('/'));
   return r;
 }
+/** The screen's pull to refresh (the RefreshControl handed to its scroll view). */
+const pull = () => screen.container.queryAll((n) => n.type === 'RCTScrollView' && !!n.props.refreshControl)[0].props.refreshControl.props;
 
 describe('Home', () => {
   it('home shows overall net per currency', async () => {
@@ -80,6 +82,27 @@ describe('Home', () => {
     expect(screen.getByLabelText('Notifications, 3 unread notifications')).toBeTruthy();
   });
 
+  it('an answer to something already answered or removed marks the home card read and says so', async () => {
+    const s = currentServices();
+    jest.spyOn(s.expenses, 'acceptShare').mockRejectedValue(new AppError('not_found', 'Expense not found'));
+    const markRead = jest.spyOn(s.notifications, 'markRead');
+    await openHome();
+    await fireEvent.press(await screen.findByLabelText(`Accept share: ${TOIT}`));
+    expect(await screen.findByText('This was already answered or removed')).toBeTruthy();
+    await waitFor(() => expect(markRead).toHaveBeenCalled());
+    expect(await screen.findByLabelText('Notifications, 2 unread notifications')).toBeTruthy();
+  });
+
+  it('a home card with nothing to answer about shows no ✕ / ✓', async () => {
+    const s = currentServices();
+    const list = await s.notifications.list();
+    jest.spyOn(s.notifications, 'list').mockResolvedValue(list.map((x) => ({ ...x, refId: x.refId === 'e_toit' ? null : x.refId })));
+    await openHome();
+    expect(await screen.findByText(TOIT)).toBeTruthy();
+    expect(screen.queryByLabelText(`Accept share: ${TOIT}`)).toBeNull();
+    expect(screen.queryByLabelText(`Reject share: ${TOIT}`)).toBeNull();
+  });
+
   it('a failed load shows Retry, which loads the page', async () => {
     await currentServices().debug!.setSimulateErrors(true);
     await openHome();
@@ -88,6 +111,38 @@ describe('Home', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Overall, you’re owed $35')).toBeTruthy();
     expect(screen.queryByText('Couldn’t load this')).toBeNull();
+  });
+});
+
+describe('Pull to refresh', () => {
+  it('Home reloads its spaces and notifications, with the spinner until they are in', async () => {
+    await openHome();
+    expect(await screen.findByText(TOIT)).toBeTruthy();
+    let release!: () => void;
+    const opened = new Promise<void>((resolve) => (release = resolve));
+    const { list } = currentServices().spaces;
+    const spaces = jest.spyOn(currentServices().spaces, 'list').mockImplementation(async () => {
+      await opened;
+      return list();
+    });
+    const notifications = jest.spyOn(currentServices().notifications, 'list');
+    await act(async () => pull().onRefresh());
+    expect(pull().refreshing).toBe(true); // the spaces are still loading
+    expect(spaces).toHaveBeenCalled();
+    expect(notifications).toHaveBeenCalled();
+    await act(async () => release());
+    await waitFor(() => expect(pull().refreshing).toBe(false));
+  });
+
+  it('the Space page reloads the space', async () => {
+    const r = await openHome();
+    await act(async () => router.push('/space/sp_flat'));
+    await waitFor(() => expect(r.getPathname()).toBe('/space/sp_flat'));
+    expect(await screen.findByText('You owe ₹473.34')).toBeTruthy();
+    const get = jest.spyOn(currentServices().spaces, 'get');
+    await act(async () => pull().onRefresh());
+    await waitFor(() => expect(get).toHaveBeenCalledWith('sp_flat'));
+    await waitFor(() => expect(pull().refreshing).toBe(false));
   });
 });
 

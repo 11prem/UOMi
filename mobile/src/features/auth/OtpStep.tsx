@@ -93,7 +93,7 @@ export function OtpStep({ title, masked, resendRef, verify, onEdit }: Props) {
               }
             }}
             onComplete={check}
-            error={failed}
+            error={failed ? message : undefined}
             shakeKey={shake}
             autoFocus
           />

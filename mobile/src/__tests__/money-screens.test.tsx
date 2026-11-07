@@ -109,6 +109,28 @@ describe('Add / Edit Expense', () => {
     expect(save()).toBeEnabled();
   });
 
+  it('exact and percent: a ticked row left empty or at 0 makes the split invalid, so nobody gets a ₹0 share', async () => {
+    await open('/space/sp_flat/expense-new');
+    await fillExpense('Pizza', '300');
+    await fireEvent.press(screen.getByRole('radio', { name: 'Exact' }));
+    await fireEvent.changeText(screen.getByLabelText('Exact amount for Kabir Rao'), '200');
+    await fireEvent.changeText(screen.getByLabelText('Exact amount for Swetha Iyer'), '100'); // adds up, Rohan left empty
+    expect(screen.getByText('Enter an amount for everyone ticked, or untick them')).toBeTruthy();
+    expect(save()).toBeDisabled();
+    await fireEvent.changeText(screen.getByLabelText('Exact amount for Rohan Das'), '0');
+    expect(screen.getByText('Enter an amount for everyone ticked, or untick them')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('checkbox', { name: 'Rohan' }));
+    expect(screen.getByText('Adds up to the total')).toBeTruthy();
+    expect(save()).toBeEnabled();
+
+    await fireEvent.press(screen.getByRole('radio', { name: 'Percent' }));
+    await fireEvent.press(screen.getByRole('checkbox', { name: 'Rohan' }));
+    await fireEvent.changeText(screen.getByLabelText('Percent for Kabir Rao'), '50');
+    await fireEvent.changeText(screen.getByLabelText('Percent for Swetha Iyer'), '50');
+    expect(screen.getByText('Enter an amount for everyone ticked, or untick them')).toBeTruthy();
+    expect(save()).toBeDisabled();
+  });
+
   it('switching split type keeps the ticked people and clears their values; rows show their amounts live', async () => {
     await open('/space/sp_flat/expense-new');
     await fillExpense('Pizza', '300');
@@ -224,6 +246,21 @@ describe('Expense Detail', () => {
     expect((await currentServices().expenses.get('e_toit')).expense.shares[0].response).toBe('accepted');
   });
 
+  it('an expense that names someone who has left can’t be edited, and says why', async () => {
+    const s = currentServices();
+    const trip = await s.spaces.create({ name: 'Trip', icon: 'trip', currency: 'INR', memberIds: ['u_swetha'] });
+    const shares = ['u_kabir', 'u_swetha'].map((userId) => ({ userId, input: null, amountMinor: 5000, response: 'pending' as const }));
+    const e = await s.expenses.create({ spaceId: trip.id, description: 'Taxi', amountMinor: 10000, paidBy: 'u_kabir', splitType: 'equal', date: Date.now(), shares });
+    await s.debug!.actAs('u_swetha');
+    await s.expenses.rejectShare(e.id); // disputed, so it no longer counts and she is settled up
+    await s.spaces.leave(trip.id);
+    await s.debug!.actAs('u_kabir');
+
+    await open(`/expense/${e.id}/edit`);
+    expect(await screen.findByText('Swetha has left this space, so this expense can’t be edited — delete it and add it again')).toBeTruthy();
+    expect(screen.queryByLabelText('Save expense')).toBeNull();
+  });
+
   it('the creator edits an expense, then deletes it after confirming', async () => {
     const r = await open('/space/sp_flat', '/expense/e_wifi');
     await fireEvent.press(await screen.findByLabelText('Edit expense'));
@@ -260,7 +297,7 @@ describe('Settle Up and Settlement Detail', () => {
     expect(screen.getByText('Up to ₹400.00. Lower it for a part payment.')).toBeTruthy();
 
     await fireEvent.changeText(amount, '400.01');
-    expect(screen.getByText('That’s more than you owe Arun')).toBeTruthy();
+    expect(screen.getByText('That’s more than what’s left to pay Arun')).toBeTruthy();
     expect(screen.getByLabelText('Record payment')).toBeDisabled();
     await fireEvent.changeText(amount, '0');
     expect(screen.getByText('Enter an amount above 0')).toBeTruthy();
@@ -278,6 +315,13 @@ describe('Settle Up and Settlement Detail', () => {
 
     await act(async () => router.back()); // the payment replaced Settle Up: Back is the Space Page
     await waitFor(() => expect(r.getPathname()).toBe('/space/sp_cricket'));
+
+    // Back on Settle Up the row still says what is owed, with the pending part beside it; the most left is the hint.
+    await act(async () => router.push('/space/sp_cricket/settle'));
+    expect(await screen.findByRole('radio', { name: 'Arun Nair, you owe ₹400.00, ₹150.00 pending' })).toBeChecked();
+    expect(screen.getByText('You owe ₹400.00 · ₹150.00 pending')).toBeTruthy();
+    expect(screen.getByLabelText('Amount').props.value).toBe('250.00');
+    expect(screen.getByText('Up to ₹250.00. Lower it for a part payment.')).toBeTruthy();
   });
 
   it('receiver confirms payment from Settlement Detail', async () => {

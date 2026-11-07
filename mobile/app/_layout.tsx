@@ -10,13 +10,14 @@ import { ThemeProvider, useTheme } from '../src/theme/ThemeProvider';
 import { fonts } from '../src/theme/type';
 import { queryClient } from '../src/services/queries';
 import { currentServices } from '../src/services/useServices';
-import { useIdleSignOut } from '../src/state/idle';
+import { refetchOnForeground, useIdleSignOut } from '../src/state/idle';
 import { useSession } from '../src/state/session';
 import { ConfirmHost } from '../src/ui/ConfirmDialog';
 import { ToastHost } from '../src/ui/Toast';
 import { useReducedMotion } from '../src/ui/useReducedMotion';
 
 SplashScreen.preventAutoHideAsync();
+refetchOnForeground();
 
 /**
  * Waits for the saved session (read or failed), then `auth.restore()` before any other service call (specs § 4.1).
@@ -57,7 +58,7 @@ function Shell({ fontsReady }: { fontsReady: boolean }) {
   const tabBarShown = segments[0] === '(tabs)' || segments.join('/') === 'space/[id]';
   const ready = fontsReady && launched;
   useEffect(() => {
-    if (ready) SplashScreen.hideAsync();
+    if (ready) SplashScreen.hideAsync().catch(() => {}); // already hidden (a fast refresh, a second mount): nothing to do
   }, [ready]);
   if (!ready) return null;
 

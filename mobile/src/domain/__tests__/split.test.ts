@@ -92,6 +92,11 @@ describe('computeSplit shares', () => {
     expect(amounts(computeSplit(10000, 'shares', rows(1, 1, 1)))).toEqual([3334, 3333, 3333]);
   });
 
+  it('never hands a leftover unit to a row with no weight', () => {
+    expect(amounts(computeSplit(3, 'shares', rows(0, 1, 1)))).toEqual([0, 2, 1]);
+    expect(amounts(computeSplit(101, 'percent', rows(0, 50, 50)))).toEqual([0, 51, 50]);
+  });
+
   it('needs at least one share', () => {
     const r = computeSplit(10000, 'shares', rows(0, null));
     expect(r.valid).toBe(false);

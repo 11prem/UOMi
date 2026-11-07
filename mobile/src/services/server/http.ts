@@ -66,6 +66,8 @@ export function createHttp(o: HttpOptions) {
 
   let mem: StoredTokens | null | undefined; // undefined = not read from the store yet
   const tokens = async () => (mem === undefined ? (mem = await store.get()) : mem);
+  // Bumped by every sign-in and sign-out, so a reply that belongs to an earlier session can't write its tokens back.
+  let generation = 0;
 
   // Writes run one after another and always write the latest state, so a slow write can't leave old tokens behind.
   // A failed write only costs a sign-in after a restart, so it never fails a request.
@@ -111,11 +113,20 @@ export function createHttp(o: HttpOptions) {
       throw e instanceof Failure ? toAppError(e) : e;
     });
 
-  /** The server ended the session: forget the tokens and tell the app, once however many requests were in flight. */
-  async function endSession(message: string): Promise<AppError> {
-    if (mem) {
-      mem = null;
-      await persist();
+  /** A sign-in or sign-out: the new tokens (or none), and replies from the old session are ignored from now on. */
+  function replace(next: StoredTokens | null) {
+    mem = next;
+    generation++;
+    return persist();
+  }
+
+  /**
+   * The server ended the session that `access` belongs to: forget the tokens and tell the app, once however many requests
+   * were in flight. A late reply for an earlier session (signed out, or someone else signed in since) changes nothing.
+   */
+  async function endSession(message: string, access: string): Promise<AppError> {
+    if (mem?.access === access) {
+      await replace(null);
       o.onSignedOut(message);
     }
     return new AppError('session_expired', message);
@@ -124,14 +135,17 @@ export function createHttp(o: HttpOptions) {
   let refreshing: Promise<void> | null = null;
   const refresh = () => (refreshing ??= refreshTokens().finally(() => (refreshing = null)));
   async function refreshTokens() {
-    if (!mem) throw new AppError('session_expired', SIGN_IN_AGAIN);
+    const t = mem;
+    if (!t) throw new AppError('session_expired', SIGN_IN_AGAIN);
+    const gen = generation;
     try {
-      const pair = (await send('POST', '/auth/refresh', { refresh_token: mem.refresh })) as TokenPairDto;
+      const pair = (await send('POST', '/auth/refresh', { refresh_token: t.refresh })) as TokenPairDto;
+      if (gen !== generation) throw new AppError('session_expired', SIGN_IN_AGAIN); // signed out (or in again) meanwhile
       mem = { access: pair.access_token, refresh: pair.refresh_token, lastRequestAt: now(), idleSeconds: pair.idle_timeout_seconds };
       await persist();
     } catch (e) {
       if (!(e instanceof Failure)) throw e; // network: the tokens stay
-      if (e.code === 'token_expired' || SESSION_ENDED.has(e.code)) throw await endSession(e.message);
+      if (e.code === 'token_expired' || SESSION_ENDED.has(e.code)) throw await endSession(e.message, t.access);
       throw toAppError(e);
     }
   }
@@ -148,6 +162,7 @@ export function createHttp(o: HttpOptions) {
     /** An authenticated call. `token_expired` refreshes and retries once; the 401 family ends the session. */
     async request<T>(method: string, path: string, body?: unknown): Promise<T> {
       let t = await tokens();
+      const gen = generation;
       for (let attempt = 0; ; attempt++) {
         if (!t) throw new AppError('session_expired', SIGN_IN_AGAIN);
         try {
@@ -159,10 +174,11 @@ export function createHttp(o: HttpOptions) {
           if (e.code === 'token_expired' && attempt === 0) {
             // Another request may have refreshed while this one was in flight; then there is nothing to refresh.
             if (!mem || mem.access === t.access) await refresh();
+            if (gen !== generation) throw new AppError('session_expired', SIGN_IN_AGAIN); // signed out or in again since: never retry as the next user
             t = mem ?? null;
             continue;
           }
-          if (e.code === 'token_expired' || SESSION_ENDED.has(e.code)) throw await endSession(e.message);
+          if (e.code === 'token_expired' || SESSION_ENDED.has(e.code)) throw await endSession(e.message, t.access);
           throw toAppError(e);
         }
       }
@@ -170,31 +186,25 @@ export function createHttp(o: HttpOptions) {
 
     async login(username: string, password: string) {
       const pair = (await sendPlain('POST', '/auth/login', { username, password })) as TokenPairDto;
-      mem = { access: pair.access_token, refresh: pair.refresh_token, lastRequestAt: now(), idleSeconds: pair.idle_timeout_seconds };
-      await persist();
+      await replace({ access: pair.access_token, refresh: pair.refresh_token, lastRequestAt: now(), idleSeconds: pair.idle_timeout_seconds });
     },
 
-    /** Best effort: the server is told, but the tokens go either way. */
+    /** The tokens go first; then the server is told, best effort and without waiting for its answer. */
     async logout() {
       const t = await tokens();
-      if (t) await sendPlain('POST', '/auth/logout', undefined, t.access).catch(() => {});
-      mem = null;
-      await persist();
+      await replace(null);
+      if (t) sendPlain('POST', '/auth/logout', undefined, t.access).catch(() => {});
     },
 
     /** Drop the tokens without telling the server (a sign-in that could not finish). */
     async forget() {
-      mem = null;
-      await persist();
+      await replace(null);
     },
 
     /** On launch: are there tokens, and has the user been idle too long for the server to still accept them? */
     async resume(): Promise<boolean> {
       mem = await store.get();
-      if (mem && now() - mem.lastRequestAt > (mem.idleSeconds - IDLE_MARGIN_SECONDS) * 1000) {
-        mem = null;
-        await persist();
-      }
+      if (mem && now() - mem.lastRequestAt > (mem.idleSeconds - IDLE_MARGIN_SECONDS) * 1000) await replace(null);
       return mem !== null;
     },
 
