@@ -6,6 +6,7 @@ pydantic-settings>=2.7  # NoDecode
 bcrypt>=4.1
 PyJWT>=2.8
 alembic>=1.13
+APScheduler==3.11.3
 
 # PostgreSQL (the default DATABASE_URL is SQLite, which needs nothing extra)
 # psycopg[binary]>=3.2

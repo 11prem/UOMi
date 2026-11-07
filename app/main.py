@@ -1,5 +1,7 @@
 """FastAPI entry point. Run with:  uvicorn app.main:app --reload"""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,9 +10,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import app.models  # noqa: F401  (imports every model so Base.metadata knows all tables)
 from app.config import settings
 from app.routers import auth, groups, notifications, users
+from app.services.reminder_scheduler import start_scheduler, stop_scheduler
 from app.utils.errors import http_error_handler, unhandled_error_handler, validation_error_handler
 
-app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.REMINDERS_ENABLED:
+        start_scheduler()
+    yield
+    stop_scheduler()
+
+
+app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

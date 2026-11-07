@@ -6,6 +6,7 @@ import os
 os.environ["DATABASE_URL"] = "sqlite://"  # in-memory: tests never touch your real database
 os.environ["BCRYPT_ROUNDS"] = "4"  # the minimum, so tests that sign up many users stay fast
 os.environ["DEBUG"] = "false"  # an old .env with DEBUG=true makes Starlette skip the JSON 500 handler
+os.environ["REMINDERS_ENABLED"] = "false"  # `with TestClient(app)` must not start the reminder thread on the test DB
 os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789-0123456789")
 
 import pytest  # noqa: E402

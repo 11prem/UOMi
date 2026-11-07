@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # "console" writes the message to the server log (development). Real providers plug in later.
     SMS_BACKEND: str = "console"
 
+    # --- Payment reminders ---
+    # Runs the daily reminder job (days 3, 5, 7 and 10 after a share is accepted) inside the API process.
+    REMINDERS_ENABLED: bool = True
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def split_origins(cls, value):

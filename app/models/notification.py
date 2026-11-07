@@ -16,7 +16,7 @@ class NotificationType(str, enum.Enum):
     PAYMENT_ANSWERED = "payment_answered"  # the payer is told the payment was confirmed or rejected
     SPACE_ADDED = "space_added"  # "X added you to <space>"
     SPACE_DELETED = "space_deleted"  # the space is gone, the card stays
-    REMINDER = "reminder"  # automatic reminder at day 3, 7 and 10
+    REMINDER = "reminder"  # automatic reminder at day 3, 5, 7 and 10
 
 
 class Notification(Base):
