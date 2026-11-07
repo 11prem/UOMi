@@ -23,3 +23,8 @@ desktop.ini
 
 # Build output (release APK lands in dist/)
 dist/
+
+# Local tool folders (not part of the app)
+.claude/
+.superpowers/
+.impeccable/
