@@ -177,3 +177,4 @@ The detailed list, with file references, is in [`BACKEND-DEVIATIONS.md`](BACKEND
 | [`docs/superpowers/plans/2026-11-06-uomi-mobile-app.md`](docs/superpowers/plans/2026-11-06-uomi-mobile-app.md) | The build plan and API contract. |
 | [`BACKEND-DEVIATIONS.md`](BACKEND-DEVIATIONS.md) | What changed in the backend and what is still open. |
 | [`HANDOVER.md`](HANDOVER.md) | What was built, how to check it, and what is needed to ship. |
+| [`PRODUCTION-READINESS.md`](PRODUCTION-READINESS.md) | The ordered plan for the build team: everything left to reach production, from PostgreSQL to launch. |
