@@ -3,7 +3,7 @@
 For the backend team. Written 2026-11-07, while the mobile app was built and wired to the Round 1 backend.
 
 - **Plan:** `specs.md` (screens and rules) plus the build design in `docs/superpowers/specs/2026-11-06-uomi-mobile-app-design.md` § 5.
-- **Exact API shapes:** the "Backend contract after the fixes" table in `docs/superpowers/plans/2026-11-06-uomi-mobile-app.md`. `README.md` lists the endpoints and the error envelope.
+- **Exact API shapes:** the "Backend contract after the fixes" table in `docs/superpowers/plans/2026-11-06-uomi-mobile-app.md`. `docs/backend-api.md` lists the endpoints and the error envelope.
 
 The code was reviewed three ways before any change: against the plan, for FastAPI quality (including a live test run) and for security. Every change below went through its own code review. The full suite passes (118 tests).
 
