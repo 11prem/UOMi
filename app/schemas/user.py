@@ -163,9 +163,13 @@ class UserSummary(BaseModel):
     name: str
 
 
-class UserMe(UserSummary):
+class UserMe(BaseModel):
     """GET /users/me: the signed-in person's own profile, so the phone is theirs to see."""
 
+    model_config = ConfigDict(from_attributes=True)
+
+    username: str
+    name: str
     phone: str  # E.164
     currency: str  # their default currency
 

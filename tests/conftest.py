@@ -5,6 +5,7 @@ import os
 # These must be set before anything from `app` is imported, because settings are read on import.
 os.environ["DATABASE_URL"] = "sqlite://"  # in-memory: tests never touch your real database
 os.environ["BCRYPT_ROUNDS"] = "4"  # the minimum, so tests that sign up many users stay fast
+os.environ["DEBUG"] = "false"  # an old .env with DEBUG=true makes Starlette skip the JSON 500 handler
 os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789-0123456789")
 
 import pytest  # noqa: E402

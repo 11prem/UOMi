@@ -55,9 +55,11 @@ def test_cors_other_origin_refused(client):
 
 
 def test_cors_origins_come_from_a_comma_separated_env_value(monkeypatch):
+    # _env_file=None: a developer's own .env must not change what this test sees
     monkeypatch.setenv("CORS_ORIGINS", "http://a.test, http://b.test")
-    assert Settings().CORS_ORIGINS == ["http://a.test", "http://b.test"]
-    assert settings.CORS_ORIGINS == ["http://localhost:8081", "http://127.0.0.1:8081"]
+    assert Settings(_env_file=None).CORS_ORIGINS == ["http://a.test", "http://b.test"]
+    monkeypatch.delenv("CORS_ORIGINS")
+    assert Settings(_env_file=None).CORS_ORIGINS == ["http://localhost:8081", "http://127.0.0.1:8081"]
 
 
 # --- Error envelope ---------------------------------------------------------

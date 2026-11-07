@@ -97,6 +97,9 @@ uvicorn app.main:app --reload
 `.env` is not committed because it holds your secret key. Set `SECRET_KEY` in it to a long random value, for example
 the output of `python -c "import secrets; print(secrets.token_hex(32))"`. Use a different key for any real deployment.
 
+If you already have a `.env` from an older copy, set `DEBUG=false` in it. With `DEBUG=true` an unexpected error
+returns a traceback page instead of the JSON `internal_error` reply the app expects.
+
 No SMS provider is connected. With `SMS_BACKEND=console`, the forgot-password text is printed in the
 server output, for example `[SMS to +919876543210] Your UOMi code is 482913. ...`. That is how you read the
 code while developing. Never run with the console backend in production, because it logs the code.
@@ -117,8 +120,10 @@ built-in demo data, so both show the same balances. Development only: every demo
 
 1. Create the tables: `alembic upgrade head`
 2. Create the demo data: `python scripts/seed_demo.py`. If `kabir.r` already exists it stops with exit code 1;
-   `python scripts/seed_demo.py --reset` deletes the demo users' rows (and only those) and creates them again.
-3. Start the server so other devices can reach it: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+   `python scripts/seed_demo.py --reset` deletes the demo users and every space they created, including other
+   people's expenses, payments and memberships in those spaces, and then creates the demo data again.
+3. Start the server so other devices can reach it: `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+   Windows Firewall may ask to allow Python: allow it on private networks, or use the USB route below.
 4. Find the laptop's Wi-Fi IP address with `ipconfig` (the IPv4 Address under the Wi-Fi adapter).
 5. In the app, long-press the UOMi wordmark on the Welcome screen, choose Server, and enter `http://<ip>:8000`.
 6. Sign in as `kabir.r` / `demo1234`. The other demo users are `swetha.i`, `arun.n`, `meera.s`, `rohan.d` and

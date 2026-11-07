@@ -1,7 +1,8 @@
 """ExpenseShare: how much of an expense one person owes. It waits for that person's tick or cross.
 
 The file keeps the name `expense_split.py` from the project tree; the table follows the flow map.
-Only ACCEPTED shares count towards balances.
+Pending and accepted shares count towards balances; once any share on an expense is rejected, the
+whole expense is disputed and none of its shares count.
 """
 
 import enum
