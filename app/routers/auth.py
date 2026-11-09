@@ -1,6 +1,6 @@
 """Auth endpoints: Create Account, Sign In, session refresh, Forgot Password (phone code), Logout."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,17 +18,25 @@ from app.schemas.user import (
     VerifyOTPResponse,
 )
 from app.services import auth_service, session_service
+from app.utils.rate_limit import forgot_limit, login_limit, register_limit, verify_otp_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# The limits are per client address and count every call, successful or not (utils/rate_limit.py).
 
-@router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/register",
+    response_model=TokenPair,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(register_limit)],
+)
 def register(data: RegisterRequest, db: Session = Depends(get_db)) -> TokenPair:
     """Create Account -> Home Page. Signs the new user straight in."""
     return auth_service.register_user(db, data)
 
 
-@router.post("/login", response_model=TokenPair)
+@router.post("/login", response_model=TokenPair, dependencies=[Depends(login_limit)])
 def login(data: LoginRequest, db: Session = Depends(get_db)) -> TokenPair:
     """Sign In -> Home Page. Same error for a wrong username or password; 429 after too many tries."""
     return auth_service.login(db, data.username, data.password)
@@ -40,13 +48,20 @@ def refresh(data: RefreshRequest, db: Session = Depends(get_db)) -> TokenPair:
     return session_service.refresh_session(db, data.refresh_token)
 
 
-@router.post("/forgot", response_model=ForgotResponse, status_code=status.HTTP_202_ACCEPTED)
-def forgot(data: ForgotRequest, db: Session = Depends(get_db)) -> ForgotResponse:
-    """Forgot Password: text a code to the registered phone number."""
-    return auth_service.request_password_reset(db, data.phone)
+@router.post(
+    "/forgot",
+    response_model=ForgotResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(forgot_limit)],
+)
+def forgot(
+    data: ForgotRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+) -> ForgotResponse:
+    """Forgot Password: text a code to the registered phone number (sent after the reply)."""
+    return auth_service.request_password_reset(db, data.phone, background_tasks)
 
 
-@router.post("/verify-otp", response_model=VerifyOTPResponse)
+@router.post("/verify-otp", response_model=VerifyOTPResponse, dependencies=[Depends(verify_otp_limit)])
 def verify_otp(data: VerifyOTPRequest, db: Session = Depends(get_db)) -> VerifyOTPResponse:
     """Enter the code: right code -> reset token for the Set new password screen."""
     return auth_service.verify_reset_otp(db, data.phone, data.code)
