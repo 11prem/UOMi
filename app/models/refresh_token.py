@@ -27,6 +27,9 @@ class RefreshToken(Base):
         String(30), ForeignKey("users.username", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # SHA-256 of the refresh token
+    # SHA-256 of the refresh token this session swapped out last. If that old token is ever presented
+    # again, a copy of it exists somewhere it should not, so the whole session is ended (reuse detection).
+    previous_token_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     last_activity_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime)  # absolute end of the session

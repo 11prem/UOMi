@@ -57,11 +57,20 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     )
 
 
-async def unhandled_error_handler(request: Request, exc: Exception) -> Response:
-    """Any other crash: JSON instead of a plain-text 500, with nothing about the cause."""
+def internal_error_response() -> JSONResponse:
+    """The 500 reply: JSON, with nothing about the cause."""
     return JSONResponse(
         status_code=500,
         content={
             "detail": {"code": "internal_error", "message": "Something went wrong on our side. Please try again."}
         },
     )
+
+
+async def unhandled_error_handler(request: Request, exc: Exception) -> Response:
+    """Any other crash: JSON instead of a plain-text 500, with nothing about the cause.
+
+    SafeErrorsMiddleware (app/utils/middleware.py) normally answers first, inside the CORS middleware.
+    This handler is the backstop for anything that fails outside it.
+    """
+    return internal_error_response()
