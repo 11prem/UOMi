@@ -64,7 +64,21 @@ The app handles every gap below without crashing. In **server mode** it shows "N
 
 ## 3. Before this API goes on a public URL
 
-These are from the security review, still open, highest first. None of them blocks local or LAN testing.
+**Status after branch `phase2-security-hardening` (PRODUCTION-READINESS tasks 2.1 to 2.10).** The list below is the original review, kept as it was. What the branch did to each item:
+
+| Item | State |
+|---|---|
+| 1. Enumeration oracles | **Partly closed.** Rate limits: sign-up per address, search per user and per address, and a much tighter per-user limit on searches by a complete phone number. **Still open:** the phone is not verified at sign-up, and `/auth/register` still answers `phone_taken` / `username_taken`. Both need the pending sign-up flow (task 1.1.1). The limits make probing slow and costly. They do not make it impossible. |
+| 2. SMS pumping | **Closed in code:** per-address limits on `/auth/forgot` and `/auth/verify-otp`, and `SMS_DAILY_CAP` for all numbers together. **Not code:** a daily spend ceiling and spend alerts at the SMS provider (task 7.5). There is no per-device cap, because the API has no device id: the address is all it can count. |
+| 3. Dev defaults | **Closed.** `ENVIRONMENT=production` refuses to start with the console SMS backend, `DEBUG=true`, a placeholder `SECRET_KEY`, a missing `OTP_HMAC_KEY` or non-https CORS origins, and turns off `/docs`, `/redoc` and `/openapi.json`. |
+| 4. Refresh tokens | **Closed.** One conditional UPDATE swaps the token, and a replayed token ends its session. Only the most recent swapped-out token is remembered, and a reply lost on a bad connection signs the user out (see `docs/backend-api.md`). |
+| 5. Login lockout | **Closed for the race and the per-address case.** The attempt is committed before the password check, refused attempts are taken back out, and `LOGIN_MAX_PER_IP` limits one address. **Still true:** the lockout counts per username, so someone using many addresses can still lock out a username they know. |
+| 6. Forgot-password denial of service | **Closed for cancelling:** asking again no longer cancels an earlier code or an open reset session. **Still true:** 3 codes per hour per number can be used up by anyone, which blocks that number for the hour. |
+| 7. Unicode digits in phone numbers | Not part of this branch (task 1.1.5). |
+| 8. Smaller items | **Closed:** HS256 fixed in code, `iss` / `aud` claims, a separate OTP key, bcrypt floor of 12 outside `test`, atomic single-use reset token, search terms redacted from the access log, `no-store` and HSTS, CORS headers on 500 replies, pinned dependencies. **Still open:** old `password_resets` and `refresh_tokens` rows are never deleted (task 1.7.4). |
+| 9. PostgreSQL | Not part of this branch. Migration `0003` is plain `batch_alter_table` and should be fine, but has only run on SQLite. |
+
+These are from the security review, highest first. None of them blocks local or LAN testing.
 
 1. **Registration and search act as enumeration oracles.**
    - `/auth/register` answers `phone_taken`/`username_taken` with no throttle, and the phone is never verified (gap 1). Anyone can test which numbers are registered, or register someone else's number.

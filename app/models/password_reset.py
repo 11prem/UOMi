@@ -28,7 +28,7 @@ class PasswordReset(Base):
     )
     code_hash: Mapped[str] = mapped_column(String(64))  # HMAC-SHA256, never the code itself
     attempts: Mapped[int] = mapped_column(default=0)  # wrong guesses so far
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)  # the daily code cap counts by it
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime)  # end of the code's validity
     verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     reset_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)

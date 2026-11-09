@@ -147,15 +147,16 @@ def test_the_code_expires(client, sms_outbox, otp_codes):
     assert response.status_code == 400 and error_code(response) == "invalid_code"
 
 
-def test_a_new_code_replaces_the_old_one(client, sms_outbox, otp_codes):
+def test_a_new_code_does_not_cancel_the_old_one(client, sms_outbox, otp_codes):
+    """Anyone can ask for a code for any number, so asking again must not cancel the code its owner is typing."""
     register(client, "alice")
     otp_codes("111111", "222222")
     request_code(client, sms_outbox)
     age_requests(settings.OTP_RESEND_COOLDOWN_SECONDS // 60 + 1)
     request_code(client, sms_outbox)
 
-    assert verify(client, "111111").status_code == 400  # the first code no longer works
-    assert verify(client, "222222").status_code == 200
+    assert verify(client, "111111").status_code == 200  # the first code still works
+    assert verify(client, "222222").status_code == 200  # and so does the newer one
 
 
 def test_verifying_an_unknown_number_fails_like_a_wrong_code(client):
@@ -203,13 +204,33 @@ def test_a_reset_token_works_only_once(client, sms_outbox):
     assert again.status_code == 400 and error_code(again) == "reset_session_expired"
 
 
-def test_asking_for_a_new_code_closes_an_open_reset_session(client, sms_outbox):
+def test_asking_for_a_new_code_leaves_an_open_reset_session_alone(client, sms_outbox):
+    """A stranger repeating the request must not throw the owner out of the set-new-password screen."""
     register(client, "alice")
     token = verify(client, request_code(client, sms_outbox)).json()["reset_token"]
     age_requests(settings.OTP_RESEND_COOLDOWN_SECONDS // 60 + 1)
     forgot(client)
-    response = reset(client, token)
-    assert response.status_code == 400 and error_code(response) == "reset_session_expired"
+    assert reset(client, token).status_code == 200
+
+
+def test_a_finished_reset_closes_every_other_open_code_and_reset_session(client, sms_outbox, otp_codes):
+    """Once the password has changed, no earlier code or reset session may change it again."""
+    register(client, "alice")
+    otp_codes("111111", "222222", "333333")
+    request_code(client, sms_outbox)
+    age_requests(settings.OTP_RESEND_COOLDOWN_SECONDS // 60 + 1)
+    request_code(client, sms_outbox)
+    age_requests(settings.OTP_RESEND_COOLDOWN_SECONDS // 60 + 1)
+    request_code(client, sms_outbox)
+
+    first_token = verify(client, "111111").json()["reset_token"]
+    second_token = verify(client, "222222").json()["reset_token"]
+    assert reset(client, first_token).status_code == 200
+
+    assert verify(client, "333333").status_code == 400  # the third code is closed now
+    other = reset(client, second_token, password="another-new-password-2")
+    assert other.status_code == 400 and error_code(other) == "reset_session_expired"
+    assert login(client, NEW_PASSWORD).status_code == 200  # the password is still the one from the first reset
 
 
 def test_reset_rejects_unknown_tokens_and_bad_passwords(client, sms_outbox):

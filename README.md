@@ -93,8 +93,9 @@ On macOS or Linux, use `python3 -m venv .venv`, `source .venv/bin/activate` and 
 - `SECRET_KEY` is required and must be at least 32 characters. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`. Use a different key for any real deployment. `.env` is never committed.
 - To let a phone reach the server, start it with `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
 - `python scripts/seed_demo.py` creates 6 people, 5 spaces, 10 expenses, 4 payments and 7 notifications. If `kabir.r` already exists it stops with exit code 1. `--reset` deletes the demo users and **every space they created, including other people's data in those spaces**, then recreates the demo data. The demo passwords are public, so use the seed for development only.
-- There is no SMS provider connected. With `SMS_BACKEND=console`, the one-time code is printed in the server output. Never run that setting in production.
-- Interactive API docs are at <http://127.0.0.1:8000/docs>.
+- There is no SMS provider connected. With `SMS_BACKEND=console`, the one-time code is printed in the server output. Never run that setting in production: with `ENVIRONMENT=production` the API refuses to start with it (and with `DEBUG=true`, a placeholder `SECRET_KEY`, a missing `OTP_HMAC_KEY` or non-https CORS origins).
+- The sign-in, sign-up, search and code limits are counted in memory, per API process. See [`docs/backend-api.md`](docs/backend-api.md) before running more than one worker or putting the API behind a load balancer (`TRUSTED_PROXY_COUNT`).
+- Interactive API docs are at <http://127.0.0.1:8000/docs> (off in production).
 
 The full endpoint list, settings, error codes and design decisions are in [`docs/backend-api.md`](docs/backend-api.md).
 
@@ -125,7 +126,7 @@ The APK lands in `dist\UOMi-<version>.apk`. The first build takes up to about 45
 ## Test
 
 ```bash
-pytest                         # backend, from the repository root: 127 tests on an in-memory database
+pytest                         # backend, from the repository root: 199 tests on an in-memory database
 cd mobile && npm test          # app: 334 tests in 20 suites
 cd mobile && npx tsc --noEmit  # app type check
 ```
@@ -172,6 +173,7 @@ The detailed list, with file references, is in [`BACKEND-DEVIATIONS.md`](BACKEND
 | [`DESIGN.md`](DESIGN.md) | The visual design system. |
 | [`PRODUCT.md`](PRODUCT.md) | The product brief. |
 | [`docs/backend-api.md`](docs/backend-api.md) | Backend endpoints, settings, error codes and decisions. |
+| [`docs/adding-to-the-backend.md`](docs/adding-to-the-backend.md) | How to add an endpoint, table, migration, setting or dependency so it joins up, and which test catches a missed step. |
 | [`mobile/README.md`](mobile/README.md) | Running, testing and building the app. |
 | [`docs/superpowers/specs/2026-11-06-uomi-mobile-app-design.md`](docs/superpowers/specs/2026-11-06-uomi-mobile-app-design.md) | How the app and its backend wiring were designed. |
 | [`docs/superpowers/plans/2026-11-06-uomi-mobile-app.md`](docs/superpowers/plans/2026-11-06-uomi-mobile-app.md) | The build plan and API contract. |
