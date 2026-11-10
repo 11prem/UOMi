@@ -33,6 +33,18 @@ def api_error(
     )
 
 
+def forbidden(reason: str, message: str, **extra: Any) -> HTTPException:
+    """403 for a signed-in person who may not do this. `code` is always "forbidden"; `reason` says which rule."""
+    return api_error(403, "forbidden", message, reason=reason, **extra)
+
+
+def field_error(field: str, message: str) -> HTTPException:
+    """422 for a rule only the server can check (it needs the database), in the same body as a schema error."""
+    return api_error(
+        422, "validation_error", "Some fields are invalid.", fields=[{"field": field, "message": message}]
+    )
+
+
 async def http_error_handler(request: Request, exc: StarletteHTTPException) -> Response:
     """Errors raised by api_error() already have the envelope; Starlette's own 404/405 get it here."""
     if not isinstance(exc.detail, dict):

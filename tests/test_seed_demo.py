@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.expense import Expense
 from app.models.notification import Notification
@@ -116,3 +117,34 @@ def test_reset_replaces_demo_rows_and_keeps_everyone_else(client):
     assert len(db_all(select(User))) == 7
     assert len(db_all(select(Expense))) == 10
     assert len(db_all(select(Notification))) == 7  # alice's "added" card for kabir.r went with the reset
+
+
+def test_the_seed_refuses_to_run_in_production(client, monkeypatch, capsys):
+    """The demo users have public passwords, so they must never be created on a real database."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+
+    assert main([]) == 2
+    assert main(["--reset"]) == 2
+
+    assert db_all(select(User)) == []
+    assert "production" in capsys.readouterr().err
+
+
+def test_reset_refuses_when_a_real_person_is_in_a_demo_space(client, capsys):
+    """Deleting a space a demo user made would delete the expenses and payments of everyone in it."""
+    assert main([]) == 0
+    alice = register(client, "alice")
+    kabir = sign_in_kabir(client)
+    owned = next(
+        s for s in client.get("/spaces", headers=auth(kabir)).json()["spaces"]
+        if client.get(f"/spaces/{s['id']}", headers=auth(kabir)).json()["owner_username"] == "kabir.r"
+    )
+    added = client.post(f"/spaces/{owned['id']}/members", json={"usernames": ["alice"]}, headers=auth(kabir))
+    assert added.status_code == 200
+
+    assert main(["--reset"]) == 3
+
+    assert owned["name"] in capsys.readouterr().err
+    assert len(db_all(select(User))) == 7  # nothing was deleted
+    assert len(db_all(select(Expense))) == 10
+    assert client.get(f"/spaces/{owned['id']}", headers=auth(alice)).status_code == 200  # alice is still in it

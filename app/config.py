@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     # Refresh token: the longest a session can live, even for a user who never goes idle.
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # Inactivity limit: no authenticated request for this long -> signed out.
-    SESSION_IDLE_TIMEOUT_MINUTES: int = 10
+    # 30, not 10 (decision 1.1.6): people open the app at the moment of spending, and a 10-minute limit meant typing the
+    # password again at the table. No money moves through UOMi, and the 7-day limit above still ends every session.
+    SESSION_IDLE_TIMEOUT_MINUTES: int = 30
     # Activity is written to the database at most this often per session (saves a write per request).
     SESSION_TOUCH_INTERVAL_SECONDS: int = 30
 
@@ -61,18 +63,26 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 15
     LOGIN_MAX_PER_IP: int = Field(default=30, ge=1)  # sign-in attempts from one address per lockout window
 
-    # --- Forgot password (phone code) ---
+    # --- Texted codes: sign-up verification and forgot password (specs § 3.4) ---
     OTP_LENGTH: int = 6
     OTP_TTL_MINUTES: int = 5  # how long a texted code stays valid
-    OTP_MAX_ATTEMPTS: int = 5  # wrong guesses before the code is dead
-    OTP_MAX_REQUESTS_PER_HOUR: int = 3  # codes per phone number per hour
-    OTP_RESEND_COOLDOWN_SECONDS: int = 60  # wait before asking for another code
+    OTP_MAX_ATTEMPTS: int = 5  # wrong guesses before the sign-up or reset is locked
+    OTP_LOCK_MINUTES: int = 10  # how long the lock after OTP_MAX_ATTEMPTS wrong codes lasts
+    OTP_MAX_REQUESTS_PER_HOUR: int = 3  # sign-up or reset requests per phone number (or typed username) per hour
+    OTP_MAX_SENDS_PER_REQUEST: int = 3  # texts for one request: the first plus its resends
+    OTP_RESEND_COOLDOWN_SECONDS: int = 30  # wait before asking for another code
+    OTP_FLOW_TTL_MINUTES: int = 30  # a sign-up or reset request still unfinished after this long is forgotten (no account was made)
     RESET_SESSION_TIMEOUT_MINUTES: int = 10  # time to set a new password after the code is accepted
 
     # --- Rate limits (see app/utils/rate_limit.py) ---
     REGISTER_MAX_PER_IP_PER_HOUR: int = Field(default=20, ge=1)
-    FORGOT_MAX_PER_IP_PER_HOUR: int = Field(default=10, ge=1)  # code requests from one address, for any phone numbers
+    FORGOT_MAX_PER_IP_PER_HOUR: int = Field(default=10, ge=1)  # code requests from one address, for any usernames
+    RESEND_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)  # "resend code" from one address
     VERIFY_OTP_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
+    # The live "is it free" checks on Create Account. The phone check tells anyone whether a number has an account,
+    # so it is kept much tighter than the username check.
+    USERNAME_CHECK_MAX_PER_IP_PER_MINUTE: int = Field(default=60, ge=1)
+    PHONE_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
     SEARCH_MAX_PER_USER_PER_MINUTE: int = Field(default=120, ge=1)
     SEARCH_MAX_PER_IP_PER_MINUTE: int = Field(default=240, ge=1)
     PHONE_LOOKUPS_PER_USER_PER_HOUR: int = Field(default=20, ge=1)  # searches by a complete phone number
@@ -96,6 +106,13 @@ class Settings(BaseSettings):
     # --- Payment reminders ---
     # Runs the daily reminder job (days 3, 5, 7 and 10 after a share is accepted) inside the API process.
     REMINDERS_ENABLED: bool = True
+
+    # --- Clean-up and export ---
+    # Runs the daily clean-up job inside the API process (the same scheduler as the reminders): it deletes sessions,
+    # sign-in attempts, sign-up and reset requests that have run out, and old notifications.
+    RETENTION_ENABLED: bool = True
+    NOTIFICATION_RETENTION_DAYS: int = Field(default=180, ge=1)  # a card older than this is deleted, unless it still asks something
+    EXPORT_MAX_PER_USER_PER_HOUR: int = Field(default=5, ge=1)  # "export my data" is a heavy read
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

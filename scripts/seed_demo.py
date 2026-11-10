@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so `python sc
 from sqlalchemy import delete, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from app.config import settings  # noqa: E402
 from app.database import SessionLocal, utcnow  # noqa: E402
 from app.models import (  # noqa: E402
     Expense,
@@ -205,13 +206,31 @@ def seed(db: Session) -> None:
     db.commit()
 
 
+class RealPeopleInDemoSpaces(Exception):
+    """A space a demo user made has someone who is not a demo user in it. --reset would delete their data."""
+
+
 def reset(db: Session) -> None:
     """Delete the rows that belong to the demo usernames, and nothing else. Does not commit.
+
+    It refuses (RealPeopleInDemoSpaces) when a space made by a demo user has anyone else in it: deleting that space would
+    delete their expenses and payments too.
 
     shortcut: a bill or payment by a demo user inside someone else's space is not removed, so deleting the user
     fails and nothing changes. The API cannot create those yet; handle them here when it can.
     """
     names = [username for username, _, _ in USERS]
+    shared = db.scalars(
+        select(Space.name)
+        .join(SpaceMember, SpaceMember.space_id == Space.id)
+        .where(Space.created_by.in_(names), SpaceMember.username.not_in(names))
+        .distinct()
+    ).all()
+    if shared:
+        raise RealPeopleInDemoSpaces(
+            "Not reset: these spaces were made by a demo user but other people are in them, and would lose their data: "
+            + ", ".join(sorted(shared))
+        )
     spaces = select(Space.id).where(Space.created_by.in_(names))
     bills = select(Expense.id).where(Expense.space_id.in_(spaces))
     for statement in (
@@ -237,6 +256,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reset", action="store_true", help="delete the demo users' rows first, then create them again")
     args = parser.parse_args(argv)
 
+    if settings.ENVIRONMENT == "production":  # the demo passwords are public: never create these users on a real database
+        print("Refusing to seed: ENVIRONMENT is production. The demo users have public passwords.", file=sys.stderr)
+        return 2
+
     with SessionLocal() as db:
         try:
             if args.reset:
@@ -245,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
         except AlreadySeeded as error:
             print(error, file=sys.stderr)
             return 1
+        except RealPeopleInDemoSpaces as error:
+            db.rollback()
+            print(error, file=sys.stderr)
+            return 3
     print(f"Seeded {len(USERS)} users, {len(SPACES)} spaces, {len(EXPENSES)} expenses. Sign in as kabir.r / {PASSWORD}.")
     return 0
 

@@ -132,6 +132,14 @@ def hash_otp(phone: str, code: str) -> str:
     return hmac.new(_otp_hmac_key(), message, hashlib.sha256).hexdigest()
 
 
+def keyed_digest(purpose: str, value: str) -> bytes:
+    """A stable pseudo-random value derived from `value` under the OTP key (for a made-up masked phone number).
+
+    The same input always gives the same output, and nobody without the key can predict it or reverse it.
+    """
+    return hmac.new(_otp_hmac_key(), f"{purpose}:{value}".encode("utf-8"), hashlib.sha256).digest()
+
+
 def safe_equal(a: str, b: str) -> bool:
     """Constant-time string comparison."""
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))

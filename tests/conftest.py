@@ -8,6 +8,7 @@ os.environ["DATABASE_URL"] = "sqlite://"  # in-memory: tests never touch your re
 os.environ["BCRYPT_ROUNDS"] = "4"  # the minimum, so tests that sign up many users stay fast
 os.environ["DEBUG"] = "false"  # keep the tests independent of a developer's own .env
 os.environ["OTP_HMAC_KEY"] = ""  # the tests use the key derived from SECRET_KEY
+os.environ["RETENTION_ENABLED"] = "false"  # nor the clean-up thread
 os.environ["REMINDERS_ENABLED"] = "false"  # `with TestClient(app)` must not start the reminder thread on the test DB
 os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789-0123456789")
 
@@ -20,6 +21,7 @@ import app.models  # noqa: E402, F401
 from app.database import Base, engine  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
 from app.utils.rate_limit import limiter  # noqa: E402
+from tests import helpers  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -44,11 +46,14 @@ def client():
         yield test_client
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def sms_outbox(monkeypatch):
-    """Collects the texts the app would send, as (phone, message) pairs."""
-    outbox: list[tuple[str, str]] = []
+    """Collects every text the app would send, as (phone, message) pairs.
+
+    Always on: signing up needs the texted code, so `tests.helpers.register` reads it from here.
+    """
+    helpers.OUTBOX.clear()
     monkeypatch.setattr(
-        "app.services.sms_service.send_sms", lambda phone, message: outbox.append((phone, message))
+        "app.services.sms_service.send_sms", lambda phone, message: helpers.OUTBOX.append((phone, message))
     )
-    return outbox
+    return helpers.OUTBOX
