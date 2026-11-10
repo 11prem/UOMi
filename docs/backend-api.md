@@ -1,8 +1,8 @@
 # UOMi backend reference
 
-FastAPI + SQLAlchemy 2 + Alembic. This page is the detailed reference for the API in `app/`. For setup, see the [README](../README.md). For what the backend still lacks, see [`BACKEND-DEVIATIONS.md`](../BACKEND-DEVIATIONS.md).
+FastAPI + SQLAlchemy 2 + Alembic. This page is the detailed reference for the API in `app/`. For setup, see the [README](../README.md). For what the backend still lacks, see [`BACKEND-DEVIATIONS.md`](../BACKEND-DEVIATIONS.md). To add to it, see [`adding-to-the-backend.md`](adding-to-the-backend.md).
 
-Interactive docs (Swagger UI) are at <http://127.0.0.1:8000/docs> while the server is running.
+Interactive docs (Swagger UI) are at <http://127.0.0.1:8000/docs> while the server is running. They are switched off (like `/redoc` and `/openapi.json`) when `ENVIRONMENT=production`.
 
 ## Conventions
 
@@ -56,11 +56,23 @@ All of these live in `.env`. Defaults are in `.env.example`.
 | Codes per phone number per hour | `OTP_MAX_REQUESTS_PER_HOUR` | 3 |
 | Time to set the new password after the code is accepted | `RESET_SESSION_TIMEOUT_MINUTES` | 10 |
 | Failed sign-ins before a lockout, and how long it lasts | `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES` | 5, 15 |
-| Browser origins allowed to call the API | `CORS_ORIGINS` | the Expo web dev server |
+| Sign-in attempts from one address per lockout window | `LOGIN_MAX_PER_IP` | 30 |
+| Sign-ups from one address per hour | `REGISTER_MAX_PER_IP_PER_HOUR` | 20 |
+| Code requests from one address per hour (any phone numbers) | `FORGOT_MAX_PER_IP_PER_HOUR` | 10 |
+| Code checks from one address per hour | `VERIFY_OTP_MAX_PER_IP_PER_HOUR` | 30 |
+| Searches per user, and per address, per minute | `SEARCH_MAX_PER_USER_PER_MINUTE`, `SEARCH_MAX_PER_IP_PER_MINUTE` | 120, 240 |
+| Searches by a complete phone number, per user per hour | `PHONE_LOOKUPS_PER_USER_PER_HOUR` | 20 |
+| Codes (texts) for all numbers together, per UTC day | `SMS_DAILY_CAP` | 1000 |
+| Proxies in front of the API | `TRUSTED_PROXY_COUNT` | 0 |
+| Browser origins allowed to call the API | `CORS_ORIGINS` | the Expo web dev server (nothing in production) |
 | Send payment reminders | `REMINDERS_ENABLED` | `true` |
 | Text message delivery | `SMS_BACKEND` | `console` |
+| `development`, `test`, `staging` or `production` | `ENVIRONMENT` | `development` |
+| Own key for the texted codes | `OTP_HMAC_KEY` | empty (required in production) |
 
-`SECRET_KEY` is required, at least 32 characters, and has no default on purpose.
+`SECRET_KEY` is required, at least 32 characters, and has no default on purpose. `BCRYPT_ROUNDS` (default 12) cannot be set below 12 in any environment except `test`.
+
+**Production mode.** With `ENVIRONMENT=production` the API refuses to start, with a message that lists every problem, if: `DEBUG` is true; `SMS_BACKEND` is `console`; `SECRET_KEY` looks like a placeholder or has too few different characters; `OTP_HMAC_KEY` is missing, equal to `SECRET_KEY` or weak; or `CORS_ORIGINS` has `*` or an origin that is not `https://`. In production `CORS_ORIGINS` defaults to nothing (the native app does not use CORS) and `/docs`, `/redoc` and `/openapi.json` are off.
 
 ## How the 10-minute inactivity sign-out works
 
@@ -81,8 +93,9 @@ The app also runs its own timer, using `idle_timeout_seconds` from the sign-in r
 | `session_expired` | 401 | show Sign In (idle, logged out, or past the 7-day limit) |
 | `invalid_refresh_token` | 401 | show Sign In |
 | `invalid_credentials` | 401 | wrong username or password (the same message for both) |
-| `too_many_attempts` | 429 | wait `retry_after_seconds` (also in the `Retry-After` header) |
-| `resend_too_soon`, `too_many_requests` | 429 | wait before asking for another code |
+| `too_many_attempts` | 429 | wait `retry_after_seconds` (also in the `Retry-After` header): too many failed sign-ins for that username, or too many sign-in attempts from this address |
+| `resend_too_soon` | 429 | wait before asking for another code |
+| `too_many_requests` | 429 | wait `retry_after_seconds`: too many codes for a number, any per-address or per-user rate limit (sign-up, search, phone lookups, code requests and checks), or the daily code cap |
 | `invalid_code` | 400 | wrong or expired code |
 | `reset_session_expired` | 400 | start forgot password again |
 | `username_taken`, `phone_taken` | 409 | show it on the sign-up form |
@@ -97,7 +110,17 @@ The app also runs its own timer, using `idle_timeout_seconds` from the sign-in r
 - **Signing out everywhere:** a password reset ends every session of that user and lifts a sign-in lockout.
 - **SQLite by default**, with no setup. To use PostgreSQL, install `psycopg[binary]` and set `DATABASE_URL` to `postgresql+psycopg://user:password@localhost:5432/uomi`. Migration `0002` has only been tested on SQLite.
 - **Development SMS:** with `SMS_BACKEND=console` the code is printed in the server output (for example `[SMS to +919876543210] Your UOMi code is 482913. ...`). Never run the console backend in production, because it logs every code.
-- If you have an older `.env`, set `DEBUG=false`. With `DEBUG=true` an unexpected error returns a traceback page instead of the JSON `internal_error` reply the app expects.
+- If you have an older `.env`, set `DEBUG=false` (production refuses `DEBUG=true`).
+- **The code text is sent after the reply.** It runs as a background task, for registered numbers only, so how long a reply takes does not tell anyone which numbers have an account. A failed send is logged, never raised.
+- **The daily code cap has a cost.** Whoever uses all of `SMS_DAILY_CAP` blocks password resets for everyone until UTC midnight, so set it well above real daily use, and also set a spend limit at the SMS provider.
+- **`TRUSTED_PROXY_COUNT` is only safe when the API is reachable only through those proxies.** If clients can also connect directly, they can send their own `X-Forwarded-For` and choose the address the per-address limits see.
+- **Rate limits are counted in memory** (`app/utils/rate_limit.py`). They are exact inside one API process, start from zero after a restart, and with several processes each one counts alone. Move the counters to PostgreSQL or Redis before running more than one worker. Behind a load balancer set `TRUSTED_PROXY_COUNT`, otherwise every request looks as if it came from the balancer. A blocked attempt is not counted, so hammering a blocked address does not extend its wait.
+- **Asking for a code again does not cancel the earlier one.** Anyone can ask for a code for any number, so an earlier code stays valid until it expires, and an open reset session survives. Finishing a reset closes every other open code and reset session for that number. A guess is checked against every open code of the number, and each code counts its own wrong guesses.
+- **Refresh tokens are single use, and a replay ends the session.** The hash of the token a session just swapped out is kept (`previous_token_hash`). If that old token comes back, someone holds a copy, so the whole session is ended and the owner signs in again. The reply is the same `invalid_refresh_token` as for any unknown token. Only the most recently swapped-out token is remembered. A reply lost on a bad connection leaves the app holding the old token, so its retry signs the user out.
+- **Sign-in attempts are recorded before the password is checked,** and an attempt that is refused is taken back out, so hammering a locked account does not keep the lockout going.
+- **Crashes are JSON and carry the CORS headers.** Responses to requests with a token, and everything under `/auth`, are sent with `Cache-Control: no-store`. `Strict-Transport-Security` is sent in production only.
+- **The access log does not hold search terms.** `q`, `phone`, `code` and `token` query values are replaced with `[redacted]` in uvicorn's access lines.
+- **Access tokens carry `iss` and `aud`** and are refused without them. Tokens issued before this was added are refused too, so everyone signs in again once.
 
 ## Code layout
 
@@ -108,8 +131,8 @@ app/
   schemas/    request and response shapes
   routers/    HTTP endpoints, kept thin: auth, users, groups (spaces), notifications
   services/   the logic: auth, session, sms, user (search), group, balance, notification, reminder
-  utils/      security.py, validators.py, errors.py
-migrations/   Alembic: 0001 initial schema, 0002 spec alignment, bdc30b15495a payment reminders
+  utils/      security.py, validators.py, errors.py, rate_limit.py, middleware.py, log_redaction.py
+migrations/   Alembic: 0001 initial schema, 0002 spec alignment, bdc30b15495a payment reminders, 0003 refresh token reuse
 scripts/      seed_demo.py, the demo data for the phone app
-tests/        127 tests on an in-memory database
+tests/        in-memory database (a few tests use a temporary SQLite file, to race threads); test_integration_guards.py checks the wiring
 ```

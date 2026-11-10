@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.database import utcnow
 from app.models.refresh_token import RefreshToken
+from app.utils import security
 from tests.helpers import auth, db_all, db_exec, error_code, register
 
 IDLE = settings.SESSION_IDLE_TIMEOUT_MINUTES
@@ -74,6 +75,8 @@ def test_an_expired_access_token_asks_for_a_refresh_not_a_login(client):
     session = db_all(select(RefreshToken))[0]
     expired = jwt.encode(
         {
+            "iss": settings.JWT_ISSUER,
+            "aud": settings.JWT_AUDIENCE,
             "sub": "alice",
             "sid": session.id,
             "purpose": "access",
@@ -81,7 +84,7 @@ def test_an_expired_access_token_asks_for_a_refresh_not_a_login(client):
             "exp": utcnow() - timedelta(minutes=5),
         },
         settings.SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
+        algorithm=security.JWT_ALGORITHM,
     )
     response = client.get("/spaces", headers={"Authorization": f"Bearer {expired}"})
     assert response.status_code == 401

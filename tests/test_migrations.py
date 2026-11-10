@@ -130,6 +130,18 @@ def test_a_notification_outlives_its_space(db_head, tmp_path):
     assert rows(db, "SELECT COUNT(*), MIN(space_id), MIN(space_name) FROM notifications") == [(5, None, "Goa Trip")]
 
 
+def test_0003_adds_the_previous_token_column_and_its_downgrade_removes_it(db_head, tmp_path):
+    def columns(db: Path) -> list[str]:
+        return [row[1] for row in rows(db, "PRAGMA table_info(refresh_tokens)")]
+
+    assert "previous_token_hash" in columns(db_head)
+    db = tmp_path / "copy.db"
+    shutil.copy(db_head, db)
+    alembic(db, "downgrade", "bdc30b15495a")
+    assert "previous_token_hash" not in columns(db)
+    assert rows(db, "SELECT name FROM sqlite_master WHERE name = 'ix_refresh_tokens_previous_token_hash'") == []
+
+
 def test_downgrade_returns_to_0001_and_keeps_what_it_can(db_0001, db_head, tmp_path):
     db = tmp_path / "copy.db"
     shutil.copy(db_head, db)

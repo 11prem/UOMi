@@ -1,16 +1,50 @@
-fastapi>=0.115
-uvicorn>=0.30
-sqlalchemy>=2.0
-pydantic>=2.7
-pydantic-settings>=2.7  # NoDecode
-bcrypt>=4.1
-PyJWT>=2.8
-alembic>=1.13
+# Every dependency is pinned to an exact version (Phase 2, task 2.9), so a fresh install gets the versions the
+# tests ran against. Direct dependencies come first; the rest is what they pull in.
+#
+# Pinned from a clean install on Python 3.15 (Windows). colorama and tzdata are Windows-only extras and are
+# harmless elsewhere. To update: install newer versions into a fresh venv, run `pytest`, then `pip freeze`
+# and edit this file. Check for known vulnerabilities before a release:  pip-audit -r requirements.txt
+# tests/test_phase2_security.py fails if a line here is not pinned with ==.
+
+# --- Direct dependencies ---
+fastapi==0.162.2
+uvicorn==0.54.0
+sqlalchemy==2.1.8
+pydantic==2.14.3
+pydantic-settings==2.16.2  # NoDecode needs 2.7 or newer
+bcrypt==5.0.0
+PyJWT==2.15.1
+alembic==1.20.1
 APScheduler==3.11.3
 
-# PostgreSQL (the default DATABASE_URL is SQLite, which needs nothing extra)
-# psycopg[binary]>=3.2
+# PostgreSQL (the default DATABASE_URL is SQLite, which needs nothing extra). Pin the version when you enable it:
+# psycopg[binary]==<version>
 
 # Tests
-pytest>=8.0
-httpx>=0.27
+pytest==9.2.0
+httpx==0.28.1
+
+# --- What the above pull in ---
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.16.0
+certifi==2026.10.23
+click==8.5.1
+colorama==0.4.6
+h11==0.16.0
+httpcore==1.0.9
+idna==3.20
+iniconfig==2.3.1
+Mako==1.4.3
+MarkupSafe==3.0.4
+opentelemetry-api==1.45.2
+packaging==26.3
+pluggy==1.7.0
+pydantic_core==2.50.4
+Pygments==2.21.0
+python-dotenv==1.2.4
+starlette==1.10.0
+typing-inspection==0.4.5
+typing_extensions==4.16.0
+tzdata==2026.6
+tzlocal==5.4.5

@@ -15,6 +15,10 @@ from app.database import utcnow
 
 ACCESS_PURPOSE = "access"
 
+# Fixed on purpose, not a setting: a token signed with any other algorithm (including "none") is refused.
+JWT_ALGORITHM = "HS256"
+_REQUIRED_CLAIMS = ["exp", "sub", "sid", "purpose", "iss", "aud"]
+
 
 class TokenError(Exception):
     """The access token is missing a claim, has a bad signature, or is the wrong kind."""
@@ -71,13 +75,15 @@ def create_access_token(username: str, session_id: str) -> str:
     """The username is the identity; `sid` ties the token to a row in refresh_tokens (the session)."""
     now = utcnow()
     payload = {
+        "iss": settings.JWT_ISSUER,  # who made the token: this API
+        "aud": settings.JWT_AUDIENCE,  # who it is for: the UOMi app
         "sub": username,
         "sid": session_id,
         "purpose": ACCESS_PURPOSE,
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     }
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> tuple[str, str]:
@@ -86,8 +92,10 @@ def decode_access_token(token: str) -> tuple[str, str]:
         payload = jwt.decode(
             token,
             settings.SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
-            options={"require": ["exp", "sub", "sid", "purpose"]},
+            algorithms=[JWT_ALGORITHM],
+            issuer=settings.JWT_ISSUER,
+            audience=settings.JWT_AUDIENCE,
+            options={"require": _REQUIRED_CLAIMS},
         )
     except jwt.ExpiredSignatureError as exc:
         raise TokenExpired("Access token expired") from exc
@@ -107,10 +115,21 @@ def generate_otp(length: int | None = None) -> str:
     return "".join(secrets.choice(string.digits) for _ in range(length or settings.OTP_LENGTH))
 
 
+def _otp_hmac_key() -> bytes:
+    """The key for the texted codes: OTP_HMAC_KEY, which is separate from the token-signing SECRET_KEY.
+
+    Left empty (development), a key is derived from SECRET_KEY for this one purpose, so the two uses
+    still never share a key. Production requires OTP_HMAC_KEY to be set (see config.production_problems).
+    """
+    if settings.OTP_HMAC_KEY:
+        return settings.OTP_HMAC_KEY.encode("utf-8")
+    return hmac.new(settings.SECRET_KEY.encode("utf-8"), b"uomi:otp-hmac-key:v1", hashlib.sha256).digest()
+
+
 def hash_otp(phone: str, code: str) -> str:
     """HMAC of the code, bound to the phone number. The plain code is never stored."""
     message = f"otp:{phone}:{code}".encode("utf-8")
-    return hmac.new(settings.SECRET_KEY.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return hmac.new(_otp_hmac_key(), message, hashlib.sha256).hexdigest()
 
 
 def safe_equal(a: str, b: str) -> bool:
