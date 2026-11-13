@@ -436,7 +436,7 @@ describe('Debug menu', () => {
 
 describe('server mode', () => {
   /** A signed-in server session. The server instance is the one `useServices()` returns, so spies on it reach the screens. */
-  async function openServer(initialUrl: string) {
+  async function openServer(initialUrl: string, setup?: (s: ReturnType<typeof currentServices>) => void) {
     useSession.setState({ mode: 'server', serverUrl: 'http://x', user: KABIR });
     const s = currentServices();
     jest.spyOn(s.auth, 'restore').mockResolvedValue(KABIR);
@@ -445,16 +445,41 @@ describe('server mode', () => {
     jest.spyOn(s.notifications, 'unreadCount').mockResolvedValue(0);
     jest.spyOn(s.spaces, 'list').mockResolvedValue([]);
     jest.spyOn(s.transactions, 'list');
+    setup?.(s); // before the screen opens, so its first request is the one the test answers
     return openApp(initialUrl);
   }
 
-  it('Transactions shows Not available on this server yet', async () => {
-    await openServer('/transactions');
+  const SERVER_ROW = {
+    kind: 'expense' as const,
+    id: '7',
+    description: 'Dinner',
+    date: Date.now(),
+    amountMinor: 1000,
+    paidById: 'arun.n',
+    paidByName: 'Arun Nair',
+    myPartMinor: -1000,
+    myResponse: 'pending' as const,
+    disputed: false,
+    spaceId: '2',
+    spaceName: 'Goa Trip',
+    currency: 'INR' as const,
+  };
+
+  it('Transactions lists what the server returns, and the chips ask it again', async () => {
+    await openServer('/transactions', (s) => jest.spyOn(s.transactions, 'list').mockResolvedValue([SERVER_ROW]));
+    expect(await screen.findByLabelText(/^Dinner, Goa Trip · [^,]+, Pending, you owe ₹10$/)).toBeTruthy();
+    expect(screen.queryByText('Not available on this server yet')).toBeNull();
+    expect(currentServices().transactions.list).toHaveBeenCalledWith({ kind: 'all' });
+    expect(currentServices().spaces.list).toHaveBeenCalled(); // the space filter is filled from the server's spaces
+    await fireEvent.press(screen.getByRole('button', { name: 'Payments' }));
+    await waitFor(() => expect(currentServices().transactions.list).toHaveBeenCalledWith({ kind: 'payments' }));
+  });
+
+  it('Transactions on an older server without the endpoint shows Not available on this server yet', async () => {
+    await openServer('/transactions', (s) => jest.spyOn(s.transactions, 'list').mockRejectedValue(notOnServer()));
     expect(await screen.findByText('Not available on this server yet')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Payments' })).toBeNull();
     expect(screen.queryByLabelText('Filter by space, All spaces')).toBeNull();
-    expect(currentServices().transactions.list).not.toHaveBeenCalled(); // gated on the mode: nothing is asked of a server that can't answer
-    expect(currentServices().spaces.list).not.toHaveBeenCalled();
   });
 
   it('Profile shows the user, disables what the server cannot save, and keeps the theme local', async () => {

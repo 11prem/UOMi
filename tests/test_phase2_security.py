@@ -26,11 +26,12 @@ from app.models.login_attempt import LoginAttempt
 from app.models.password_reset import PasswordReset
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.services import auth_service, session_service, user_service
+from app.schemas.user import RegisterRequest
+from app.services import auth_service, otp_service, session_service, user_service
 from app.utils import security
 from app.utils.log_redaction import RedactQueryFilter, install_access_log_redaction, redact
 from app.utils.middleware import SafeErrorsMiddleware
-from tests.helpers import PHONES, auth, db_all, error_code, register
+from tests.helpers import PHONES, auth, db_all, error_code, register, register_payload
 
 GOOD_SECRET = "0123456789abcdef" * 4  # obviously fake: a test fixture, not a key
 GOOD_OTP_KEY = "fedcba9876543210" * 4  # obviously fake: a test fixture, not a key
@@ -46,6 +47,9 @@ def production_settings(**overrides) -> Settings:
         ENVIRONMENT="production",
         DEBUG=False,
         SMS_BACKEND="a-real-provider",
+        PUSH_BACKEND="fcm",
+        FIREBASE_PROJECT_ID="demo-project",
+        FIREBASE_CREDENTIALS_FILE="firebase.json",
         SECRET_KEY=GOOD_SECRET,
         OTP_HMAC_KEY=GOOD_OTP_KEY,
         BCRYPT_ROUNDS=12,
@@ -127,6 +131,9 @@ def use_production_settings(monkeypatch) -> None:
         ENVIRONMENT="production",
         DEBUG=False,
         SMS_BACKEND="a-real-provider",
+        PUSH_BACKEND="fcm",
+        FIREBASE_PROJECT_ID="demo-project",
+        FIREBASE_CREDENTIALS_FILE="firebase.json",
         SECRET_KEY=GOOD_SECRET,
         OTP_HMAC_KEY=GOOD_OTP_KEY,
         CORS_ORIGINS=[],
@@ -219,16 +226,18 @@ def test_a_code_texted_under_one_otp_key_is_refused_under_another(client, sms_ou
     register(client, "alice")
     register(client, "bob")
     monkeypatch.setattr(settings, "OTP_HMAC_KEY", GOOD_OTP_KEY)
-    assert client.post("/auth/forgot", json={"phone": PHONES["alice"]}).status_code == 202
+    alices = client.post("/auth/forgot", json={"username": "alice"})
+    assert alices.status_code == 202
     alices_code = texted_code()
 
     monkeypatch.setattr(settings, "OTP_HMAC_KEY", "9" * 12 + GOOD_SECRET[:40])  # the key is rotated
-    refused = client.post("/auth/verify-otp", json={"phone": PHONES["alice"], "code": alices_code})
+    refused = client.post("/auth/verify-otp", json={"reset_id": alices.json()["reset_id"], "code": alices_code})
     assert refused.status_code == 400 and error_code(refused) == "invalid_code"
 
     # control: a code texted under the new key is accepted, so the refusal above was about the key
-    assert client.post("/auth/forgot", json={"phone": PHONES["bob"]}).status_code == 202
-    accepted = client.post("/auth/verify-otp", json={"phone": PHONES["bob"], "code": texted_code()})
+    bobs = client.post("/auth/forgot", json={"username": "bob"})
+    assert bobs.status_code == 202
+    accepted = client.post("/auth/verify-otp", json={"reset_id": bobs.json()["reset_id"], "code": texted_code()})
     assert accepted.status_code == 200
 
 
@@ -532,14 +541,17 @@ def test_the_code_text_is_scheduled_after_the_reply_not_sent_during_it(client, s
     """A real SMS send takes hundreds of milliseconds. Sent inline, it would make the reply slower for registered
     numbers only, which tells an attacker who has an account."""
     register(client, "alice")
-    registered, unknown = BackgroundTasks(), BackgroundTasks()
+    sms_outbox.clear()  # the sign-up code
+    registered, unknown, signing_up = BackgroundTasks(), BackgroundTasks(), BackgroundTasks()
     with SessionLocal() as db:
-        auth_service.request_password_reset(db, PHONE, registered)
-        auth_service.request_password_reset(db, "+919000000001", unknown)
-    assert sms_outbox == []  # nothing was sent while the reply was being prepared
-    assert len(registered.tasks) == 1 and unknown.tasks == []
+        auth_service.request_password_reset(db, "alice", registered)
+        auth_service.request_password_reset(db, "nobody", unknown)
+        auth_service.start_signup(db, RegisterRequest(**register_payload(username="bob", phone=PHONES["bob"])), signing_up)
+    assert sms_outbox == []  # nothing was sent while the replies were being prepared
+    assert len(registered.tasks) == 1 and unknown.tasks == [] and len(signing_up.tasks) == 1
     asyncio.run(registered())
-    assert [phone for phone, _ in sms_outbox] == [PHONE]
+    asyncio.run(signing_up())
+    assert [phone for phone, _ in sms_outbox] == [PHONE, "+919876543211"]  # alice's reset code, bob's sign-up code
 
 
 def test_a_failing_text_send_is_logged_and_never_raised(monkeypatch, caplog):
@@ -547,6 +559,6 @@ def test_a_failing_text_send_is_logged_and_never_raised(monkeypatch, caplog):
         raise RuntimeError("provider down")
 
     monkeypatch.setattr("app.services.sms_service.send_sms", broken)
-    with caplog.at_level(logging.ERROR, logger="app.services.auth_service"):
-        auth_service._send_code_text(PHONE, "123456")  # does not raise
-    assert "Could not send the password-reset text" in caplog.text
+    with caplog.at_level(logging.ERROR, logger="app.services.otp_service"):
+        otp_service.send_code_text(PHONE, "123456")  # does not raise
+    assert "Could not send the one-time code text" in caplog.text

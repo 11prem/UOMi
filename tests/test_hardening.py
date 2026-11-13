@@ -158,10 +158,14 @@ def test_otp_attempts_counted_atomically(tmp_path):
         db.flush()  # the user row first: the reset row has a foreign key to it
         db.add(
             PasswordReset(
+                public_id="pw_test",
+                requested_username="alice",
                 phone=phone,
                 username="alice",
                 code_hash=security.hash_otp(phone, "123456"),
+                last_sent_at=utcnow(),
                 expires_at=utcnow() + timedelta(minutes=5),
+                valid_until=utcnow() + timedelta(minutes=30),
             )
         )
         db.commit()
@@ -180,18 +184,24 @@ def test_otp_attempts_counted_atomically(tmp_path):
         first_read.done = False
         with Session(engine) as db:
             with pytest.raises(HTTPException) as caught:
-                auth_service.verify_reset_otp(db, phone, "000000")
+                auth_service.verify_reset_otp(db, "pw_test", "000000")
         return caught.value.detail["code"]
 
     with ThreadPoolExecutor(threads) as pool:
-        assert list(pool.map(wrong_guess, range(threads))) == ["invalid_code"] * threads
+        answers = sorted(pool.map(wrong_guess, range(threads)))
+
+    # However the 8 guesses are interleaved, each got its own attempt number: guesses 1 to 4 are plain wrong codes,
+    # the 5th (and every later one) is the lock. If the counter were read and written back, all 8 would be "wrong".
+    allowed = settings.OTP_MAX_ATTEMPTS - 1
+    assert answers == sorted(["invalid_code"] * allowed + ["otp_locked"] * (threads - allowed))
 
     with Session(engine) as db:
         row = db.scalars(select(PasswordReset)).one()
-        assert row.attempts == min(threads, settings.OTP_MAX_ATTEMPTS)
-        with pytest.raises(HTTPException) as caught:  # the right code is refused: the code is dead
-            auth_service.verify_reset_otp(db, phone, "123456")
-        assert caught.value.detail["code"] == "invalid_code"
+        assert row.attempts == settings.OTP_MAX_ATTEMPTS
+        assert row.locked_until is not None
+        with pytest.raises(HTTPException) as caught:  # the right code is refused too: it is locked
+            auth_service.verify_reset_otp(db, "pw_test", "123456")
+        assert caught.value.detail["code"] == "otp_locked"
     engine.dispose()
 
 

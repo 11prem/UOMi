@@ -51,7 +51,7 @@ def get_auth_context(
     session_service.touch_session(db, session_id, username)  # raises session_expired when idle
 
     user = db.get(User, username)
-    if user is None:
+    if user is None or user.deleted_at is not None:
         raise api_error(401, "invalid_token", "Invalid access token.", headers=BEARER_HEADERS)
     return AuthContext(user=user, session_id=session_id)
 
