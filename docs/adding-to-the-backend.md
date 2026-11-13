@@ -16,6 +16,7 @@ alembic heads          # must print exactly one line
 |---|---|---|
 | An endpoint in an existing router | Write it in `app/routers/<area>.py`; put the logic in `app/services/`. | nothing to wire |
 | A new router file | Add its module to the tuple in `create_app()` in `app/main.py`. | `test_every_router_file_is_included_in_the_app` |
+| An endpoint, or a change to what one takes or returns | Give it a docstring (its first line is the description in the API record), then run `python scripts/export_api_contract.py` and commit `docs/openapi.json` and `docs/api-contract.md`. | `test_the_openapi_file_matches_the_code`, `test_the_endpoint_table_matches_the_code`, `test_every_endpoint_says_what_it_does` |
 | An endpoint that needs no sign-in | Give it a rate limit (below), or add it to `PUBLIC_WITHOUT_LIMIT` in the guards file with the reason it is safe. | `test_every_public_route_is_rate_limited_or_knowingly_exempt` |
 | A table | Model in `app/models/`, imported in `app/models/__init__.py`; then `alembic revision --autogenerate -m "..."`. | `test_every_model_file_is_imported_by_app_models`, `test_upgrade_head_matches_models` |
 | A migration | It must revise the current head (`alembic heads`). If a teammate's migration landed first, change your `down_revision` to theirs, or run `alembic merge heads`. | `test_there_is_a_single_migration_head` |

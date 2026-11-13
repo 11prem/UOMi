@@ -1,7 +1,7 @@
 """Sign up, sign in, refresh and logout."""
 
 from app.config import settings
-from tests.helpers import PASSWORD, PHONES, auth, error_code, register, register_payload
+from tests.helpers import PASSWORD, PHONES, auth, error_code, last_code, register, register_payload
 
 LOGIN_MAX = settings.LOGIN_MAX_ATTEMPTS
 
@@ -22,10 +22,12 @@ def test_register_returns_tokens_and_the_timeouts(client):
 
 
 def test_register_cleans_up_username_and_phone(client):
-    response = client.post(
-        "/auth/register", json=register_payload(username="  Alice ", phone="+91 98765-43210")
+    started = client.post("/auth/register", json=register_payload(username="  Alice ", phone="+91 98765-43210"))
+    assert started.status_code == 202
+    verified = client.post(
+        "/auth/register/verify", json={"pending_id": started.json()["pending_id"], "code": last_code(PHONES["alice"])}
     )
-    assert response.status_code == 201
+    assert verified.status_code == 201
     assert login(client, "alice").status_code == 200
     # the cleaned-up phone is what is stored, so the plain number is now taken
     again = client.post("/auth/register", json=register_payload(username="alice2"))
@@ -49,7 +51,7 @@ def test_duplicate_phone_is_409(client):
 def test_register_rejects_bad_input(client):
     bad_payloads = [
         register_payload(confirm_password="different-password"),  # passwords do not match
-        register_payload(password="short", confirm_password="short"),  # too short
+        register_payload(password="short1", confirm_password="short1"),  # too short
         register_payload(username="a b"),  # space in the username
         register_payload(username="ab"),  # too short
         register_payload(phone="12345"),  # not a phone number
@@ -141,3 +143,16 @@ def test_logging_out_one_device_leaves_the_other_signed_in(client):
     second = login(client).json()
     client.post("/auth/logout", headers=auth(first))
     assert client.get("/spaces", headers=auth(second)).status_code == 200
+
+
+def test_the_idle_sign_out_is_thirty_minutes_by_default(client):
+    """Decision 1.1.6. The code's default and the example settings file agree, whatever a local .env says."""
+    from pathlib import Path
+
+    from app.config import Settings
+
+    assert Settings.model_fields["SESSION_IDLE_TIMEOUT_MINUTES"].default == 30
+    example = (Path(__file__).resolve().parent.parent / ".env.example").read_text(encoding="utf-8")
+    assert "SESSION_IDLE_TIMEOUT_MINUTES=30" in example.splitlines()
+    tokens = register(client, "alice")
+    assert tokens["idle_timeout_seconds"] == settings.SESSION_IDLE_TIMEOUT_MINUTES * 60  # what the app's timer follows

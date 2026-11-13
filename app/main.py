@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import app.models  # noqa: F401  (imports every model so Base.metadata knows all tables)
 from app.config import check_production_settings, settings
-from app.routers import auth, groups, notifications, users
+from app.routers import auth, expenses, groups, notifications, settlements, transactions, users
 from app.services.reminder_scheduler import start_scheduler, stop_scheduler
 from app.utils.errors import http_error_handler, unhandled_error_handler, validation_error_handler
 from app.utils.log_redaction import install_access_log_redaction
@@ -18,7 +18,7 @@ from app.utils.middleware import SafeErrorsMiddleware, SecurityHeadersMiddleware
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if settings.REMINDERS_ENABLED:
+    if settings.REMINDERS_ENABLED or settings.RETENTION_ENABLED or settings.PUSH_ENABLED:
         start_scheduler()
     yield
     stop_scheduler()
@@ -56,11 +56,12 @@ def create_app() -> FastAPI:
     application.add_exception_handler(StarletteHTTPException, http_error_handler)
     application.add_exception_handler(Exception, unhandled_error_handler)
 
-    for router_module in (auth, users, groups, notifications):
+    for router_module in (auth, users, groups, expenses, settlements, transactions, notifications):
         application.include_router(router_module.router)
 
     @application.get("/health", tags=["meta"])
     def health() -> dict[str, str]:
+        """Liveness probe: answers 200 while the process is up. No sign-in, and it touches no data."""
         return {"status": "ok"}
 
     install_access_log_redaction()  # keep search terms (phone numbers) out of the access log

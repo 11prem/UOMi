@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     # Refresh token: the longest a session can live, even for a user who never goes idle.
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # Inactivity limit: no authenticated request for this long -> signed out.
-    SESSION_IDLE_TIMEOUT_MINUTES: int = 10
+    # 30, not 10 (decision 1.1.6): people open the app at the moment of spending, and a 10-minute limit meant typing the
+    # password again at the table. No money moves through UOMi, and the 7-day limit above still ends every session.
+    SESSION_IDLE_TIMEOUT_MINUTES: int = 30
     # Activity is written to the database at most this often per session (saves a write per request).
     SESSION_TOUCH_INTERVAL_SECONDS: int = 30
 
@@ -61,18 +63,26 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 15
     LOGIN_MAX_PER_IP: int = Field(default=30, ge=1)  # sign-in attempts from one address per lockout window
 
-    # --- Forgot password (phone code) ---
+    # --- Texted codes: sign-up verification and forgot password (specs § 3.4) ---
     OTP_LENGTH: int = 6
     OTP_TTL_MINUTES: int = 5  # how long a texted code stays valid
-    OTP_MAX_ATTEMPTS: int = 5  # wrong guesses before the code is dead
-    OTP_MAX_REQUESTS_PER_HOUR: int = 3  # codes per phone number per hour
-    OTP_RESEND_COOLDOWN_SECONDS: int = 60  # wait before asking for another code
+    OTP_MAX_ATTEMPTS: int = 5  # wrong guesses before the sign-up or reset is locked
+    OTP_LOCK_MINUTES: int = 10  # how long the lock after OTP_MAX_ATTEMPTS wrong codes lasts
+    OTP_MAX_REQUESTS_PER_HOUR: int = 3  # sign-up or reset requests per phone number (or typed username) per hour
+    OTP_MAX_SENDS_PER_REQUEST: int = 3  # texts for one request: the first plus its resends
+    OTP_RESEND_COOLDOWN_SECONDS: int = 30  # wait before asking for another code
+    OTP_FLOW_TTL_MINUTES: int = 30  # a sign-up or reset request still unfinished after this long is forgotten (no account was made)
     RESET_SESSION_TIMEOUT_MINUTES: int = 10  # time to set a new password after the code is accepted
 
     # --- Rate limits (see app/utils/rate_limit.py) ---
     REGISTER_MAX_PER_IP_PER_HOUR: int = Field(default=20, ge=1)
-    FORGOT_MAX_PER_IP_PER_HOUR: int = Field(default=10, ge=1)  # code requests from one address, for any phone numbers
+    FORGOT_MAX_PER_IP_PER_HOUR: int = Field(default=10, ge=1)  # code requests from one address, for any usernames
+    RESEND_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)  # "resend code" from one address
     VERIFY_OTP_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
+    # The live "is it free" checks on Create Account. The phone check tells anyone whether a number has an account,
+    # so it is kept much tighter than the username check.
+    USERNAME_CHECK_MAX_PER_IP_PER_MINUTE: int = Field(default=60, ge=1)
+    PHONE_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
     SEARCH_MAX_PER_USER_PER_MINUTE: int = Field(default=120, ge=1)
     SEARCH_MAX_PER_IP_PER_MINUTE: int = Field(default=240, ge=1)
     PHONE_LOOKUPS_PER_USER_PER_HOUR: int = Field(default=20, ge=1)  # searches by a complete phone number
@@ -96,6 +106,25 @@ class Settings(BaseSettings):
     # --- Payment reminders ---
     # Runs the daily reminder job (days 3, 5, 7 and 10 after a share is accepted) inside the API process.
     REMINDERS_ENABLED: bool = True
+
+    # --- Clean-up and export ---
+    # Runs the daily clean-up job inside the API process (the same scheduler as the reminders): it deletes sessions,
+    # sign-in attempts, sign-up and reset requests that have run out, and old notifications.
+    RETENTION_ENABLED: bool = True
+    NOTIFICATION_RETENTION_DAYS: int = Field(default=180, ge=1)  # a card older than this is deleted, unless it still asks something
+    EXPORT_MAX_PER_USER_PER_HOUR: int = Field(default=5, ge=1)  # "export my data" is a heavy read
+
+    # --- Push notifications (task 1.8) ---
+    # Every card also becomes a push to the person's phones. The worker below sends them outside the request that made
+    # the card, so a slow or down push service never slows or fails the API.
+    PUSH_ENABLED: bool = True
+    PUSH_BACKEND: str = "console"  # "console" logs the push (development); "fcm" sends through Firebase (task 1.8.2)
+    FIREBASE_PROJECT_ID: str = ""  # for PUSH_BACKEND=fcm: the Firebase project from task 0.6
+    FIREBASE_CREDENTIALS_FILE: str = ""  # for PUSH_BACKEND=fcm: path to that project's service-account JSON file (a secret)
+    PUSH_SHOW_DETAILS: bool = True  # false: the lock screen says only "You have a new notification" (Appendix B, B.7)
+    PUSH_POLL_SECONDS: int = Field(default=5, ge=1)  # how often the worker looks for pushes that are due
+    PUSH_MAX_ATTEMPTS: int = Field(default=5, ge=1)  # tries before a push is given up on
+    DEVICE_TOKEN_RETENTION_DAYS: int = Field(default=60, ge=1)  # a phone not seen for this long is forgotten
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -136,6 +165,15 @@ class Settings(BaseSettings):
                 "SMS_BACKEND is 'console', which writes every one-time code to the server log. "
                 "Set a real SMS provider."
             )
+        if self.PUSH_ENABLED and self.PUSH_BACKEND == "console":
+            problems.append(
+                "PUSH_BACKEND is 'console', which only logs each push (with the card's text) to the server log. "
+                "Set a real push provider, or PUSH_ENABLED=false."
+            )
+        if self.PUSH_ENABLED and self.PUSH_BACKEND == "fcm" and not (self.FIREBASE_PROJECT_ID and self.FIREBASE_CREDENTIALS_FILE):
+            problems.append("PUSH_BACKEND is 'fcm' but FIREBASE_PROJECT_ID or FIREBASE_CREDENTIALS_FILE is not set.")
+        if self.PUSH_ENABLED and self.PUSH_BACKEND not in ("console", "fcm"):
+            problems.append(f"PUSH_BACKEND is {self.PUSH_BACKEND!r}: it must be 'fcm' (or 'console' in development).")
         weakness = _key_weakness(self.SECRET_KEY)
         if weakness:
             problems.append(f"SECRET_KEY {weakness}. Generate one: python -c \"import secrets; print(secrets.token_hex(32))\"")
