@@ -166,7 +166,7 @@ def test_0004_adds_pending_signups_and_the_reset_columns_and_its_downgrade_remov
     def columns(db: Path, table: str) -> set[str]:
         return {row[1] for row in rows(db, f"PRAGMA table_info({table})")}
 
-    assert {"public_id", "username", "phone", "password_hash", "code_hash", "valid_until"} <= columns(db_head, "pending_signups")
+    assert {"public_id", "username", "email", "password_hash", "code_hash", "valid_until"} <= columns(db_head, "pending_signups")  # 0009 made the phone an email
     assert NEW_RESET_COLUMNS <= columns(db_head, "password_resets")
 
     db = tmp_path / "copy.db"
@@ -273,14 +273,16 @@ def test_0005_makes_the_money_columns_64_bit_and_keeps_every_amount(db_head, tmp
 
 
 def test_0007_lets_a_deleted_account_have_no_phone_and_a_downgrade_gives_it_a_placeholder(db_head, tmp_path):
+    """Checked at revision 0008, the schema 0007 produced (0009 replaces the phone with an email: see its own test)."""
     def phone_is_required(db: Path) -> bool:
         return next(bool(notnull) for _, name, _, notnull, *_ in rows(db, "PRAGMA table_info(users)") if name == "phone")
 
-    assert phone_is_required(db_head) is False
-    assert "deleted_at" in [name for _, name, *_ in rows(db_head, "PRAGMA table_info(users)")]
-
     db = tmp_path / "deleted.db"
     shutil.copy(db_head, db)
+    alembic(db, "downgrade", "0008")
+    assert phone_is_required(db) is False
+    assert "deleted_at" in [name for _, name, *_ in rows(db, "PRAGMA table_info(users)")]
+
     users = rows(db, "SELECT username, phone FROM users ORDER BY username")
     run_script(db, "INSERT INTO users (username, name, phone, password_hash, currency, notifications_on, created_at, deleted_at) "
                    "SELECT 'gone.a', 'Deleted user', NULL, password_hash, currency, 0, created_at, created_at FROM users LIMIT 1")
@@ -295,3 +297,52 @@ def test_0007_lets_a_deleted_account_have_no_phone_and_a_downgrade_gives_it_a_pl
 
     alembic(db, "upgrade", "head")
     assert len(rows(db, "SELECT username FROM users")) == len(users) + 2
+
+
+def test_0009_replaces_the_phone_with_a_unique_email_and_keeps_every_account(db_head, tmp_path):
+    def columns(db: Path, table: str) -> dict[str, int]:
+        return {name: notnull for _, name, _, notnull, *_ in rows(db, f"PRAGMA table_info({table})")}
+
+    for table in ("users", "pending_signups", "password_resets"):
+        assert "phone" not in columns(db_head, table) and "email" in columns(db_head, table)
+    assert columns(db_head, "users")["email"] == 1  # NOT NULL
+    assert rows(db_head, "SELECT username, email FROM users ORDER BY username") == [
+        ("alice", "alice@example.invalid"),  # nobody had an email yet: a placeholder each, unique because the username is
+        ("bob", "bob@example.invalid"),
+    ]
+    indexes = {(name, bool(unique), tuple(column for _, _, column in rows(db_head, f"PRAGMA index_info({name})")))
+               for _, name, unique, *_ in rows(db_head, "PRAGMA index_list(users)")}
+    assert ("ix_users_email", True, ("email",)) in indexes  # unique
+
+    db = tmp_path / "unique.db"
+    shutil.copy(db_head, db)
+    with pytest.raises(sqlite3.IntegrityError):
+        run_script(db, "UPDATE users SET email = 'alice@example.invalid'")  # bob may not take alice's address
+
+
+def test_0009_drops_what_was_waiting_on_a_phone_code_and_a_downgrade_restores_unique_phones(db_head, tmp_path):
+    db = tmp_path / "copy.db"
+    shutil.copy(db_head, db)
+    run_script(
+        db,
+        """
+        INSERT INTO pending_signups (public_id, username, name, email, password_hash, code_hash, attempts, send_count,
+            last_sent_at, expires_at, valid_until, created_at)
+            VALUES ('su_x', 'carol', 'Carol', 'carol@example.com', 'h', '0', 0, 1,
+            '2026-01-02 00:00:00.000000', '2026-01-02 00:05:00.000000', '2026-01-02 00:30:00.000000', '2026-01-02 00:00:00.000000');
+        INSERT INTO users (username, name, email, password_hash, currency, notifications_on, created_at, deleted_at)
+            VALUES ('gone', 'Deleted user', 'deleted:gone@example.invalid', 'x', 'INR', 0, '2026-01-01 00:00:00.000000', '2026-01-03 00:00:00.000000');
+        """,
+    )
+
+    alembic(db, "downgrade", "0008")
+
+    assert rows(db, "SELECT COUNT(*) FROM pending_signups") == [(0,)]  # a sign-up cannot carry an email back into a phone column
+    phones = [phone for (phone,) in rows(db, "SELECT phone FROM users ORDER BY username")]
+    assert len(phones) == 3 and len(set(phones)) == 3 and all(phones)  # unique placeholders, so the unique index holds
+    assert "email" not in [name for _, name, *_ in rows(db, "PRAGMA table_info(users)")]
+
+    alembic(db, "upgrade", "head")
+    assert rows(db, "SELECT username, email FROM users ORDER BY username") == [
+        ("alice", "alice@example.invalid"), ("bob", "bob@example.invalid"), ("gone", "gone@example.invalid"),
+    ]

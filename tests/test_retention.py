@@ -34,12 +34,12 @@ def token(name: str, expires_at) -> RefreshToken:
 
 
 def reset(public_id: str, created_at) -> PasswordReset:
-    return PasswordReset(public_id=public_id, requested_username="alice", phone="+919876543210", code_hash="0" * 64,
+    return PasswordReset(public_id=public_id, requested_username="alice", email="alice@example.com", code_hash="0" * 64,
                          created_at=created_at, expires_at=created_at + timedelta(minutes=5))
 
 
 def signup(public_id: str, valid_until) -> PendingSignup:
-    return PendingSignup(public_id=public_id, username="x" + public_id[-5:], name="X", phone="+919000000000", password_hash="h",
+    return PendingSignup(public_id=public_id, username="x" + public_id[-5:], name="X", email="x@example.com", password_hash="h",
                          code_hash="0" * 64, expires_at=valid_until, valid_until=valid_until)
 
 
@@ -103,7 +103,7 @@ def test_a_second_run_finds_nothing_more(alice):
 
 
 def test_a_request_is_kept_for_a_whole_day_because_the_daily_cap_counts_it(alice):
-    """Forgetting it sooner would let the cap on texts per day be dodged. 23 hours old is still counted."""
+    """Forgetting it sooner would let the cap on emails per day be dodged. 23 hours old is still counted."""
     with SessionLocal() as db:
         db.add_all([reset("pw_a", ago(hours=23, minutes=50)), signup("su_a", ago(hours=23, minutes=50))])
         db.commit()

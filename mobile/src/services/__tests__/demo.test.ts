@@ -599,42 +599,36 @@ describe('auth', () => {
 
   it('sign up needs the code, then creates and signs in the account', async () => {
     const { svc } = make();
-    const input = { username: 'Newbie_1', name: ' New Bie ', phone: '+919812345678', password: 'abcd1234' };
+    const input = { username: 'Newbie_1', name: ' New Bie ', email: ' New.Bie@Example.com ', password: 'abcd1234' };
     expect(await svc.auth.checkUsername('newbie_1')).toBe(true);
-    expect(await svc.auth.checkPhone('+919812345678')).toBe(true);
-    const { pendingId, maskedPhone } = await svc.auth.signUp(input);
-    expect(maskedPhone).toBe('+91 98******78');
+    expect(await svc.auth.checkEmail('new.bie@example.com')).toBe(true);
+    const { pendingId, maskedEmail } = await svc.auth.signUp(input);
+    expect(maskedEmail).toBe('ne*****@example.com');
     expect(await svc.auth.checkUsername('newbie_1')).toBe(true); // nothing exists until verified
     expect(await svc.auth.restore()).toBeNull();
 
     const user = await svc.auth.verifySignUpOtp(pendingId, '123456');
-    expect(user).toMatchObject({ username: 'newbie_1', name: 'New Bie', phone: '+919812345678', phoneVerified: true, avatarUrl: null });
+    expect(user).toMatchObject({ username: 'newbie_1', name: 'New Bie', email: 'new.bie@example.com', emailVerified: true, avatarUrl: null });
     expect((await svc.auth.restore())?.id).toBe(user.id);
     expect(await svc.auth.checkUsername('newbie_1')).toBe(false);
-    expect(await svc.auth.checkPhone('+919812345678')).toBe(false);
+    expect(await svc.auth.checkEmail('NEW.bie@example.com')).toBe(false); // case-insensitive
     expect(await svc.spaces.list()).toEqual([]); // empty state for a new user
-    expect((await svc.profile.getPreferences()).defaultCurrency).toBe('INR'); // from the +91 phone
+    expect((await svc.profile.getPreferences()).defaultCurrency).toBe('INR');
     await svc.auth.signOut();
-    for (const [phone, currency] of [['+14165550123', 'CAD'], ['+12025550123', 'USD']]) {
-      // +1 is shared: the number itself says Canada or the US
-      const other = await svc.auth.signUp({ ...input, username: `n${currency.toLowerCase()}`, phone });
-      await svc.auth.verifySignUpOtp(other.pendingId, '123456');
-      expect((await svc.profile.getPreferences()).defaultCurrency).toBe(currency);
-      await svc.auth.signOut();
-    }
     expect(await svc.auth.signIn('newbie_1', 'abcd1234')).toMatchObject({ id: user.id });
 
     await rejects(svc.auth.signUp({ ...input, username: 'kabir.r' }), 'username_taken', 'Username already taken');
-    await rejects(svc.auth.signUp({ ...input, username: 'someone', phone: '+919845012331' }), 'phone_taken', 'Phone number already registered');
+    await rejects(svc.auth.signUp({ ...input, username: 'someone', email: 'Kabir.R@example.com' }), 'email_taken', 'Email already registered');
     await rejects(svc.auth.signUp({ ...input, username: 'ab' }), 'validation_error');
     await rejects(svc.auth.signUp({ ...input, username: 'someone', password: 'short1' }), 'validation_error');
     await rejects(svc.auth.signUp({ ...input, username: 'someone', password: 'allletters' }), 'validation_error');
-    await rejects(svc.auth.signUp({ ...input, username: 'someone', phone: '98123' }), 'validation_error');
+    for (const email of ['98123', 'a@b', 'a b@x.io', 'a@@x.io', 'kabïr@example.com'])
+      await rejects(svc.auth.signUp({ ...input, username: 'someone', email }), 'invalid_email', 'Enter a valid email address');
   });
 
   it('otp rules: wrong code, 5 wrong locks for 10 minutes, 5-minute expiry, resend', async () => {
     const { svc, clock } = make();
-    const input = { username: 'newbie', name: 'New Bie', phone: '+919812345678', password: 'abcd1234' };
+    const input = { username: 'newbie', name: 'New Bie', email: 'n1@example.com', password: 'abcd1234' };
 
     // A wrong code, then the right one.
     const a = await svc.auth.signUp(input);
@@ -644,13 +638,13 @@ describe('auth', () => {
     await svc.auth.signOut();
 
     // Four wrong codes still allow the right one.
-    const b = await svc.auth.signUp({ ...input, username: 'newbie2', phone: '+919812345679' });
+    const b = await svc.auth.signUp({ ...input, username: 'newbie2', email: 'n2@example.com' });
     for (let i = 0; i < 4; i++) await rejects(svc.auth.verifySignUpOtp(b.pendingId, '111111'), 'invalid_code');
     expect((await svc.auth.verifySignUpOtp(b.pendingId, '123456')).username).toBe('newbie2');
     await svc.auth.signOut();
 
     // The 5th wrong code locks, even for the right code, until 10 minutes pass.
-    const c = await svc.auth.signUp({ ...input, username: 'newbie3', phone: '+919812345670' });
+    const c = await svc.auth.signUp({ ...input, username: 'newbie3', email: 'n3@example.com' });
     for (let i = 0; i < 4; i++) await rejects(svc.auth.verifySignUpOtp(c.pendingId, '111111'), 'invalid_code');
     const locked = await svc.auth.verifySignUpOtp(c.pendingId, '111111').catch((e) => e);
     expect(locked).toMatchObject({ code: 'otp_locked', message: 'Too many attempts — try again in 10 minutes', extra: { retry_after_seconds: 600 } });
@@ -663,7 +657,7 @@ describe('auth', () => {
     await svc.auth.signOut();
 
     // Expiry: valid for 5 minutes from the last send.
-    const d = await svc.auth.signUp({ ...input, username: 'newbie4', phone: '+919812345671' });
+    const d = await svc.auth.signUp({ ...input, username: 'newbie4', email: 'n4@example.com' });
     clock.now += 5 * 60_000;
     await rejects(svc.auth.verifySignUpOtp(d.pendingId, '000000'), 'invalid_code'); // still within 5 minutes
     clock.now += 1;
@@ -672,11 +666,10 @@ describe('auth', () => {
     expect((await svc.auth.verifySignUpOtp(d.pendingId, '123456')).username).toBe('newbie4');
   });
 
-  it('forgot password: username, masked phone, code, new password', async () => {
+  it('forgot password: username, masked email, code, new password', async () => {
     const { svc } = make();
-    await rejects(svc.auth.requestResetOtp('nobody'), 'unknown_username', 'We couldn’t find that username');
-    const { resetId, maskedPhone } = await svc.auth.requestResetOtp(' Swetha.I ');
-    expect(maskedPhone).toBe('+91 98******44');
+    const { resetId, maskedEmail } = await svc.auth.requestResetOtp(' Swetha.I ');
+    expect(maskedEmail).toBe('sw******@example.com');
     await rejects(svc.auth.verifyResetOtp(resetId, '654321'), 'invalid_code');
     expect(await svc.auth.resendOtp(resetId)).toEqual({ resendAfterSeconds: 30 });
     const { resetToken } = await svc.auth.verifyResetOtp(resetId, '123456');
@@ -687,18 +680,22 @@ describe('auth', () => {
     expect((await svc.auth.signIn('swetha.i', 'newpass99')).id).toBe('u_swetha');
   });
 
+  it('forgot password: an unknown username gets the same kind of reply and fails only at the end', async () => {
+    const { svc } = make();
+    const ghost = await svc.auth.requestResetOtp('nobody');
+    expect(ghost).toEqual({ resetId: expect.stringMatching(/^rst_/), maskedEmail: 'no****@example.com' });
+    await rejects(svc.auth.verifyResetOtp(ghost.resetId, '654321'), 'invalid_code'); // the same code rules
+    const { resetToken } = await svc.auth.verifyResetOtp(ghost.resetId, '123456');
+    await rejects(svc.auth.resetPassword(resetToken, 'newpass99'), 'not_found'); // nothing to reset, and no account appears
+    await rejects(svc.auth.signIn('nobody', 'newpass99'), 'invalid_credentials');
+  });
+
   it('search follows specs § 6.2', async () => {
     const { svc } = make();
     await signInAs(svc, 'kabir.r');
     const names = async (q: string) => (await svc.users.search(q)).map((u) => u.username);
-    expect(await names('9880213344')).toEqual(['swetha.i']); // national digits read in the viewer's country (+91)
-    expect(await names('98802 13344')).toEqual(['swetha.i']);
-    expect(await names('+91 98802-13344')).toEqual(['swetha.i']);
-    expect(await names('+971501234567')).toEqual(['meera.s']); // a typed dial code wins
-    expect(await names('501234567')).toEqual([]); // that is +91 501234567
-    expect(await names('98802')).toEqual([]); // never a partial number
-    expect(await names('+9198802')).toEqual([]);
-    expect(await names('9845012331')).toEqual([]); // the viewer is never returned
+    expect(await names('9880213344')).toEqual([]); // digits are only ever a username prefix
+    expect(await names('swetha.i@example.com')).toEqual([]); // and an email is not looked up either
     expect(await names('sw')).toEqual(['swetha.i']);
     expect(await names('SWETHA.')).toEqual(['swetha.i']);
     expect(await names('@arun')).toEqual(['arun.n']);
@@ -707,9 +704,6 @@ describe('auth', () => {
     expect(await names('wetha')).toEqual([]); // prefix, not substring
     expect(await names('  ')).toEqual([]);
     expect(await names('@')).toEqual([]);
-    await actAs(svc, 'u_meera');
-    expect(await names('9845012331')).toEqual([]); // read as +971 9845012331
-    expect(await names('+919845012331')).toEqual(['kabir.r']);
   });
 });
 

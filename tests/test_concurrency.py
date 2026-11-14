@@ -32,7 +32,7 @@ from app.schemas.user import RegisterRequest
 from app.services import auth_service, expense_service, group_service, settlement_service
 from tests.helpers import register_payload
 
-PHONES = {"alice": "+919876543210", "bob": "+919876543211", "carol": "+919876543212"}
+EMAILS = {"alice": "alice@example.com", "bob": "bob@example.com", "carol": "bobby@example.com"}
 
 
 @pytest.fixture
@@ -72,13 +72,13 @@ def seed(engine) -> tuple[int, int]:
 
     Returns (space id, expense id)."""
     with Session(engine) as db:
-        for name, phone in PHONES.items():
-            db.add(User(username=name, name=name.capitalize(), phone=phone, password_hash="x"))
+        for name, email in EMAILS.items():
+            db.add(User(username=name, name=name.capitalize(), email=email, password_hash="x"))
         db.flush()
         space = Space(name="Flat", icon="home", currency="INR", created_by="alice")
         db.add(space)
         db.flush()
-        db.add_all([SpaceMember(space_id=space.id, username=n, position=i) for i, n in enumerate(PHONES, start=1)])
+        db.add_all([SpaceMember(space_id=space.id, username=n, position=i) for i, n in enumerate(EMAILS, start=1)])
         expense = Expense(
             space_id=space.id, paid_by="alice", created_by="alice", description="Rent", amount_minor=100000,
             split_type=SplitType.EQUAL, date=utcnow().date(),
@@ -103,19 +103,19 @@ def cards(engine, username, type_) -> int:
 # --- Starting a sign-up or a reset: the limits hold under a burst -------------------------------------
 
 
-def signup_for(phone: str, counter) -> callable:
+def signup_for(email: str, counter) -> callable:
     def start(db):
         return auth_service.start_signup(
-            db, RegisterRequest(**register_payload(username=f"user{next(counter):02d}", phone=phone)), BackgroundTasks()
+            db, RegisterRequest(**register_payload(username=f"user{next(counter):02d}", email=email)), BackgroundTasks()
         )
 
     return start
 
 
-def test_a_burst_of_sign_ups_for_one_phone_gets_one_text(engine):
-    """Old code: all 10 passed the cooldown check (each read 'nothing sent yet'), so all 10 were texted."""
+def test_a_burst_of_sign_ups_for_one_email_gets_one_email(engine):
+    """Old code: all 10 passed the cooldown check (each read 'nothing sent yet'), so all 10 were emailed."""
     counter = itertools.count()
-    results = run_each(engine, [signup_for("+919876543299", counter) for _ in range(10)])
+    results = run_each(engine, [signup_for("burst@example.com", counter) for _ in range(10)])
 
     passed = [r for r in results if r[0] == "ok"]
     assert len(passed) <= 1
@@ -126,7 +126,7 @@ def test_a_burst_of_sign_ups_for_one_phone_gets_one_text(engine):
 def test_a_burst_obeys_the_hourly_limit_even_without_the_cooldown(engine, monkeypatch):
     monkeypatch.setattr(settings, "OTP_RESEND_COOLDOWN_SECONDS", 0)
     counter = itertools.count()
-    results = run_each(engine, [signup_for("+919876543299", counter) for _ in range(10)])
+    results = run_each(engine, [signup_for("burst@example.com", counter) for _ in range(10)])
 
     passed = [r for r in results if r[0] == "ok"]
     assert 1 <= len(passed) <= settings.OTP_MAX_REQUESTS_PER_HOUR  # old code: all 10
@@ -151,11 +151,11 @@ def test_a_burst_of_made_up_usernames_is_limited_exactly_like_a_real_one(engine,
     assert 1 <= len(passed) <= settings.OTP_MAX_REQUESTS_PER_HOUR
 
 
-def test_a_burst_across_many_phones_cannot_pass_the_daily_cap(engine, monkeypatch):
-    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 2)
+def test_a_burst_across_many_emails_cannot_pass_the_daily_cap(engine, monkeypatch):
+    monkeypatch.setattr(settings, "EMAIL_DAILY_CAP", 2)
     counter = itertools.count()
-    phones = [f"+91987650{n:04d}" for n in range(1000, 1008)]
-    results = run_each(engine, [signup_for(phone, counter) for phone in phones])
+    emails = [f"burst{n}@example.com" for n in range(8)]
+    results = run_each(engine, [signup_for(email, counter) for email in emails])
 
     passed = [r for r in results if r[0] == "ok"]
     assert 1 <= len(passed) <= 2  # old code: all 8
@@ -163,18 +163,18 @@ def test_a_burst_across_many_phones_cannot_pass_the_daily_cap(engine, monkeypatc
 
 
 def test_the_daily_cap_still_counts_a_sign_up_after_it_is_verified(engine, monkeypatch):
-    """Old code deleted the sign-up when it was verified, so the cap forgot its text: 6 accounts under a cap of 3."""
-    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 3)
-    texts = {}
-    monkeypatch.setattr("app.services.sms_service.send_sms", lambda phone, message: texts.setdefault(phone, message))
+    """Old code deleted the sign-up when it was verified, so the cap forgot its email: 6 accounts under a cap of 3."""
+    monkeypatch.setattr(settings, "EMAIL_DAILY_CAP", 3)
+    emails = {}
+    monkeypatch.setattr("app.services.email_service.send_email", lambda to, subject, body: emails.setdefault(to, body))
     created = 0
     for n in range(6):
-        phone = f"+91987650{n:04d}"
+        email = f"user{n:02d}@example.com"
         with Session(engine) as db:
             tasks = BackgroundTasks()
             try:
                 started = auth_service.start_signup(
-                    db, RegisterRequest(**register_payload(username=f"user{n:02d}", phone=phone)), tasks
+                    db, RegisterRequest(**register_payload(username=f"user{n:02d}", email=email)), tasks
                 )
             except HTTPException as refused:
                 assert refused.detail["code"] == "too_many_requests"
@@ -182,7 +182,7 @@ def test_the_daily_cap_still_counts_a_sign_up_after_it_is_verified(engine, monke
             import asyncio
 
             asyncio.run(tasks())
-            code = texts[phone].split("code is ")[1][:6]
+            code = emails[email].split("code is ")[1][:6]
             auth_service.verify_signup(db, started.pending_id, code)
             created += 1
     assert created == 3
@@ -356,8 +356,8 @@ def test_repeating_a_reject_at_the_same_moment_tells_the_creator_once(engine):
 
 def seed_users(engine) -> None:
     with Session(engine) as db:
-        for name, phone in PHONES.items():
-            db.add(User(username=name, name=name.capitalize(), phone=phone, password_hash="x"))
+        for name, email in EMAILS.items():
+            db.add(User(username=name, name=name.capitalize(), email=email, password_hash="x"))
         db.commit()
 
 
@@ -367,7 +367,7 @@ def new_space(engine) -> int:
         space = Space(name="Flat", icon="home", currency="INR", created_by="alice")
         db.add(space)
         db.flush()
-        db.add_all([SpaceMember(space_id=space.id, username=n, position=i) for i, n in enumerate(PHONES, start=1)])
+        db.add_all([SpaceMember(space_id=space.id, username=n, position=i) for i, n in enumerate(EMAILS, start=1)])
         db.commit()
         return space.id
 
@@ -437,14 +437,14 @@ def test_two_people_adding_at_the_limit_cannot_both_get_in(engine):
     seed_users(engine)
     with Session(engine) as db:
         for name in ("late.one", "late.two"):
-            db.add(User(username=name, name=name.title(), phone="+9190000" + str(abs(hash(name)) % 100000).zfill(5), password_hash="x"))
+            db.add(User(username=name, name=name.title(), email=f"{name}@example.com", password_hash="x"))
         db.commit()
     for round_ in range(4):
         space_id = new_space(engine)
         with Session(engine) as db:
             for n in range(46):  # alice, bob and carol, and 46 more: 49
                 filler = f"filler{round_}_{n:02d}"
-                db.add(User(username=filler, name=filler, phone=f"+9191{round_}{n:07d}", password_hash="x"))
+                db.add(User(username=filler, name=filler, email=f"{filler}@example.com", password_hash="x"))
                 db.flush()
                 db.add(SpaceMember(space_id=space_id, username=filler, position=4 + n))
             db.commit()
@@ -504,7 +504,7 @@ def test_two_deletions_of_one_account_at_the_same_moment_delete_it_once(engine):
     assert [value for kind, value in results if kind == "error"][0] in {"invalid_token", "forbidden"}
     with Session(engine) as db:
         carol = db.get(User, "carol")
-        assert carol.deleted_at is not None and carol.name == "Deleted user" and carol.phone is None
+        assert carol.deleted_at is not None and carol.name == "Deleted user" and carol.email == "deleted:carol@example.invalid"
     assert count(engine, SpaceMember, SpaceMember.username == "carol") == 0
 
 

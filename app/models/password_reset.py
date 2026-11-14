@@ -1,4 +1,4 @@
-"""PasswordReset: one row per forgot-password request, from texted code to new password.
+"""PasswordReset: one row per forgot-password request, from emailed code to new password.
 
 Life of a row:
   1. POST /auth/forgot       row created for a username, code stored only as an HMAC, valid until `expires_at`
@@ -25,14 +25,14 @@ class PasswordReset(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str | None] = mapped_column(String(40), unique=True, index=True)  # the `reset_id` the app holds
     requested_username: Mapped[str | None] = mapped_column(String(50), index=True)  # what was typed, even if unknown
-    phone: Mapped[str] = mapped_column(String(20), index=True)  # "" when the username does not exist
+    email: Mapped[str] = mapped_column(String(254), index=True)  # "" when the username does not exist
     username: Mapped[str | None] = mapped_column(
         String(30), ForeignKey("users.username", ondelete="CASCADE")
     )
     code_hash: Mapped[str] = mapped_column(String(64))  # HMAC-SHA256, never the code itself
     attempts: Mapped[int] = mapped_column(default=0)  # wrong guesses at the current code
     locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime)  # set after too many wrong guesses
-    send_count: Mapped[int] = mapped_column(default=1, server_default="1")  # texts sent for this request
+    send_count: Mapped[int] = mapped_column(default=1, server_default="1")  # emails sent for this request
     last_sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # the resend cooldown counts from it
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)  # the daily code cap counts by it
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime)  # end of the CURRENT code's validity

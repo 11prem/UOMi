@@ -1,5 +1,3 @@
-import { parsePhoneNumberFromString } from 'libphonenumber-js/mobile';
-import { toE164 } from '../../domain/phone';
 import type { Currency, User } from '../../domain/types';
 import { AppError, notOnServer } from '../errors';
 import type { Services } from '../types';
@@ -56,7 +54,7 @@ export function createServerServices(opts: ServerOptions): Services {
   let me: { user: User; currency: Currency } | null = null;
   async function loadMe() {
     const r = await http.request<MeDto>('GET', '/users/me');
-    return (me = { user: toUser(r, { phone: r.phone }), currency: r.currency as Currency });
+    return (me = { user: toUser(r, { email: r.email }), currency: r.currency as Currency });
   }
   const viewer = async () => me ?? (await loadMe());
   const home = () => http.request<SpaceListDto>('GET', '/spaces');
@@ -76,7 +74,7 @@ export function createServerServices(opts: ServerOptions): Services {
       verifySignUpOtp: no,
       resendOtp: no,
       checkUsername: no,
-      checkPhone: no,
+      checkEmail: no,
       requestResetOtp: no,
       verifyResetOtp: no,
       resetPassword: no,
@@ -110,16 +108,7 @@ export function createServerServices(opts: ServerOptions): Services {
 
     users: {
       async search(q) {
-        const text = q.trim();
-        const compact = text.replace(/[\s-]/g, '');
-        let query: string;
-        if (/^\+?\d+$/.test(compact)) {
-          // The server reads a number with no `+` as +91, so give it the viewer's own country's code instead.
-          const country = compact.startsWith('+') ? undefined : parsePhoneNumberFromString((await viewer()).user.phone ?? '')?.country;
-          query = (country && toE164(compact, country)) || compact;
-        } else {
-          query = text.replace(/^@/, '');
-        }
+        const query = q.trim().replace(/^@/, '');
         if (!query) return [];
         const rows = await http.request<SearchResultDto[]>('GET', `/users/search?q=${encodeURIComponent(query)}`);
         return rows.map((r) => toUser(r));

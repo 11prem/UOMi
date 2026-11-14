@@ -33,7 +33,7 @@ const APP = path.join(__dirname, '../../app');
 const DAY = 86_400_000;
 const TOIT = 'Swetha added ‘Dinner at Toit’ — your share is ₹480';
 const PRIYA = 'Priya says they paid you ₹2,000';
-const KABIR: User = { id: 'u_kabir', username: 'kabir.r', name: 'Kabir Rao', phone: '+919845012331', phoneVerified: true, avatarUrl: null, plate: 1 };
+const KABIR: User = { id: 'u_kabir', username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', emailVerified: true, avatarUrl: null, plate: 1 };
 
 // Every test starts from the seed, signed in as kabir.r, with the default preferences and the switches off.
 beforeEach(async () => {
@@ -282,10 +282,10 @@ describe('Transactions', () => {
 });
 
 describe('Profile', () => {
-  it('shows the name, phone and username with an Edit link', async () => {
+  it('shows the name, email and username with an Edit link', async () => {
     const r = await openApp('/profile');
     expect(await screen.findByText('Kabir Rao')).toBeTruthy();
-    expect(screen.getByText('+91 98450 12331')).toBeTruthy();
+    expect(screen.getByText('kabir.r@example.com')).toBeTruthy();
     expect(screen.getByText('@kabir.r')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Edit profile' }));
     await waitFor(() => expect(r.getPathname()).toBe('/profile-edit'));
@@ -529,14 +529,14 @@ describe('Edit Profile', () => {
     expect((await currentServices().profile.get()).name).toBe('Kabir R. Rao');
   });
 
-  it('username and phone are read-only', async () => {
+  it('username and email are read-only', async () => {
     await edit();
     expect(screen.getByText('@kabir.r')).toBeTruthy();
-    expect(screen.getByText('+91 98450 12331')).toBeTruthy();
+    expect(screen.getByText('kabir.r@example.com')).toBeTruthy();
     expect(screen.getByText('Your recovery key, so it can’t be changed.')).toBeTruthy();
-    expect(screen.getByText('Changing your number isn’t available yet.')).toBeTruthy();
+    expect(screen.getByText('Changing your email isn’t available yet.')).toBeTruthy();
     expect(screen.queryByLabelText('Username')).toBeNull(); // no input to type in
-    expect(screen.queryByLabelText('Phone number')).toBeNull();
+    expect(screen.queryByLabelText('Email')).toBeNull();
   });
 
   it('an empty name asks for one and saves nothing', async () => {

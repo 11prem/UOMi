@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { prettyPhone } from '../../src/domain/phone';
 import { DebugSheet } from '../../src/features/debug/DebugSheet';
 import { SettingsSection } from '../../src/features/profile/SettingsSection';
 import { SectionHeading } from '../../src/features/space/SectionHeading';
@@ -61,7 +60,7 @@ export default function Profile() {
           <MemberPlate user={me} lg />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[type.title, { color: colors.ink }]}>{me.name}</Text>
-            {!!me.phone && <Text style={[type.body, { color: colors.ink2, marginTop: space.s1 / 2 }]}>{prettyPhone(me.phone)}</Text>}
+            {!!me.email && <Text style={[type.body, { color: colors.ink2, marginTop: space.s1 / 2 }]}>{me.email}</Text>}
             <Text style={[type.label, { color: colors.ink2 }]}>{`@${me.username}`}</Text>
           </View>
           <IconButton icon="pencil" label="Edit profile" disabled={server} onPress={() => router.push('/profile-edit')} />

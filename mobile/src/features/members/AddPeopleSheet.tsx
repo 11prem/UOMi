@@ -20,8 +20,8 @@ import { toast } from '../../ui/Toast';
 import { errorText, refreshMoney } from '../expense/refresh';
 
 /**
- * "Add people" on Members & Settings (specs § 10 → the § 6.2 search): the same search — a whole phone number or a
- * username prefix, 300 ms after typing stops — into a list of people to add. The Add People route belongs to Create Space
+ * "Add people" on Members & Settings (specs § 10 → the § 6.2 search): the same search — a username
+ * prefix, 300 ms after typing stops — into a list of people to add. The Add People route belongs to Create Space
  * (its draft), so this is a bottom sheet. Closing it with people picked asks "Discard changes?" first (Review Focus 4).
  * Mount it with a new `key` per opening.
  */
@@ -106,8 +106,8 @@ export function AddPeopleSheet({ visible, space: s, onClose }: { visible: boolea
           label="Find people"
           value={text}
           onChangeText={setText}
-          placeholder="Phone number or username"
-          helper="Search a whole phone number or a username."
+          placeholder="Username"
+          helper="Search by username."
           autoCapitalize="none"
           autoCorrect={false}
           autoComplete="off"

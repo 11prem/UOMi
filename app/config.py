@@ -3,9 +3,9 @@
 Every timeout and every limit in the app lives here, so changing one is a one-line edit in `.env`.
 
 `ENVIRONMENT` decides how strict the app is:
-  development  the default: the console SMS backend and the public /docs page are fine
+  development  the default: the console email backend and the public /docs page are fine
   test         the test suite: the only environment that may use fewer than 12 bcrypt rounds
-  staging      like development, except that it also needs the 12-bcrypt-round floor. The key, SMS, DEBUG and CORS
+  staging      like development, except that it also needs the 12-bcrypt-round floor. The key, email, DEBUG and CORS
                checks run in production only: run a staging copy with ENVIRONMENT=production to rehearse them
   production   `check_production_settings` refuses to start the API with unsafe settings, /docs is off,
                and CORS_ORIGINS defaults to nothing instead of the Expo web dev server
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # --- Secrets ---
     SECRET_KEY: str = Field(min_length=MIN_KEY_LENGTH)  # required, no default on purpose; signs the access tokens
-    # Its own key for the texted codes, so leaking one key does not break the other. Empty: derived from
+    # Its own key for the emailed codes, so leaking one key does not break the other. Empty: derived from
     # SECRET_KEY (fine for development). Production requires it.
     OTP_HMAC_KEY: str = ""
     # The access tokens carry these claims and are refused without them. The algorithm is fixed to HS256 in code.
@@ -63,13 +63,13 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 15
     LOGIN_MAX_PER_IP: int = Field(default=30, ge=1)  # sign-in attempts from one address per lockout window
 
-    # --- Texted codes: sign-up verification and forgot password (specs § 3.4) ---
+    # --- Emailed codes: sign-up verification and forgot password (specs § 3.4) ---
     OTP_LENGTH: int = 6
-    OTP_TTL_MINUTES: int = 5  # how long a texted code stays valid
+    OTP_TTL_MINUTES: int = 5  # how long an emailed code stays valid
     OTP_MAX_ATTEMPTS: int = 5  # wrong guesses before the sign-up or reset is locked
     OTP_LOCK_MINUTES: int = 10  # how long the lock after OTP_MAX_ATTEMPTS wrong codes lasts
-    OTP_MAX_REQUESTS_PER_HOUR: int = 3  # sign-up or reset requests per phone number (or typed username) per hour
-    OTP_MAX_SENDS_PER_REQUEST: int = 3  # texts for one request: the first plus its resends
+    OTP_MAX_REQUESTS_PER_HOUR: int = 3  # sign-up or reset requests per email address (or typed username) per hour
+    OTP_MAX_SENDS_PER_REQUEST: int = 3  # emails for one request: the first plus its resends
     OTP_RESEND_COOLDOWN_SECONDS: int = 30  # wait before asking for another code
     OTP_FLOW_TTL_MINUTES: int = 30  # a sign-up or reset request still unfinished after this long is forgotten (no account was made)
     RESET_SESSION_TIMEOUT_MINUTES: int = 10  # time to set a new password after the code is accepted
@@ -79,29 +79,33 @@ class Settings(BaseSettings):
     FORGOT_MAX_PER_IP_PER_HOUR: int = Field(default=10, ge=1)  # code requests from one address, for any usernames
     RESEND_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)  # "resend code" from one address
     VERIFY_OTP_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
-    # The live "is it free" checks on Create Account. The phone check tells anyone whether a number has an account,
+    # The live "is it free" checks on Create Account. The email check tells anyone whether an address has an account,
     # so it is kept much tighter than the username check.
     USERNAME_CHECK_MAX_PER_IP_PER_MINUTE: int = Field(default=60, ge=1)
-    PHONE_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
+    EMAIL_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
     SEARCH_MAX_PER_USER_PER_MINUTE: int = Field(default=120, ge=1)
     SEARCH_MAX_PER_IP_PER_MINUTE: int = Field(default=240, ge=1)
-    PHONE_LOOKUPS_PER_USER_PER_HOUR: int = Field(default=20, ge=1)  # searches by a complete phone number
-    # Most codes (texts) the whole API will create per UTC day, for every phone number together. A last-resort
-    # brake on the SMS bill: also set a spend limit at the SMS provider. Trade-off: whoever uses the whole cap
+    # Most codes (emails) the whole API will create per UTC day, for every address together. A last-resort
+    # brake on the email bill: also set a sending limit at the email provider. Trade-off: whoever uses the whole cap
     # up blocks password resets for everyone until UTC midnight, so size it well above real daily use.
-    SMS_DAILY_CAP: int = Field(default=1000, ge=1)
+    EMAIL_DAILY_CAP: int = Field(default=1000, ge=1)
     # How many proxies (load balancers) sit in front of the API. 0 = none: the socket address is the client.
     # Only set this when the API can be reached ONLY through those proxies: if clients can also connect directly,
     # they can send their own X-Forwarded-For and pick any address for the per-address limits.
     TRUSTED_PROXY_COUNT: int = Field(default=0, ge=0)
 
     # --- Defaults ---
-    DEFAULT_COUNTRY_CODE: str = "+91"
     DEFAULT_CURRENCY: str = "INR"
 
-    # --- SMS ---
-    # "console" writes the message to the server log (development). Real providers plug in later.
-    SMS_BACKEND: str = "console"
+    # --- Email ---
+    # "console" writes the message to the server log (development). "smtp" sends it through the server below.
+    EMAIL_BACKEND: str = "console"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""  # the From address of every email
+    SMTP_STARTTLS: bool = True  # upgrade the connection to TLS (STARTTLS, port 587) before logging in
 
     # --- Payment reminders ---
     # Runs the daily reminder job (days 3, 5, 7 and 10 after a share is accepted) inside the API process.
@@ -160,11 +164,15 @@ class Settings(BaseSettings):
         problems: list[str] = []
         if self.DEBUG:
             problems.append("DEBUG is true: set DEBUG=false (it can expose internal details).")
-        if self.SMS_BACKEND == "console":
+        if self.EMAIL_BACKEND == "console":
             problems.append(
-                "SMS_BACKEND is 'console', which writes every one-time code to the server log. "
-                "Set a real SMS provider."
+                "EMAIL_BACKEND is 'console', which writes every one-time code to the server log. "
+                "Set EMAIL_BACKEND=smtp and the SMTP_* settings."
             )
+        elif self.EMAIL_BACKEND != "smtp":
+            problems.append(f"EMAIL_BACKEND is {self.EMAIL_BACKEND!r}: it must be 'smtp' (or 'console' in development).")
+        elif not (self.SMTP_HOST and self.SMTP_FROM):
+            problems.append("EMAIL_BACKEND is 'smtp' but SMTP_HOST or SMTP_FROM is not set.")
         if self.PUSH_ENABLED and self.PUSH_BACKEND == "console":
             problems.append(
                 "PUSH_BACKEND is 'console', which only logs each push (with the card's text) to the server log. "
@@ -178,7 +186,7 @@ class Settings(BaseSettings):
         if weakness:
             problems.append(f"SECRET_KEY {weakness}. Generate one: python -c \"import secrets; print(secrets.token_hex(32))\"")
         if not self.OTP_HMAC_KEY:
-            problems.append("OTP_HMAC_KEY is not set: give the texted codes their own random key of 32 or more characters.")
+            problems.append("OTP_HMAC_KEY is not set: give the emailed codes their own random key of 32 or more characters.")
         elif self.OTP_HMAC_KEY == self.SECRET_KEY:
             problems.append("OTP_HMAC_KEY must differ from SECRET_KEY.")
         else:

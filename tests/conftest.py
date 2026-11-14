@@ -48,13 +48,13 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def sms_outbox(monkeypatch):
-    """Collects every text the app would send, as (phone, message) pairs.
+def email_outbox(monkeypatch):
+    """Collects every email the app would send, as (address, body) pairs.
 
-    Always on: signing up needs the texted code, so `tests.helpers.register` reads it from here.
+    Always on: signing up needs the emailed code, so `tests.helpers.register` reads it from here.
     """
     helpers.OUTBOX.clear()
     monkeypatch.setattr(
-        "app.services.sms_service.send_sms", lambda phone, message: helpers.OUTBOX.append((phone, message))
+        "app.services.email_service.send_email", lambda to, subject, body: helpers.OUTBOX.append((to, body))
     )
     return helpers.OUTBOX

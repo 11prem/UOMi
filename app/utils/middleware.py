@@ -47,7 +47,7 @@ class SafeErrorsMiddleware:
         except ClientDisconnect:
             raise  # the client went away mid-request: nobody is left to answer, and it is not a server bug
         except Exception:
-            # Log the path only: the query string can hold a phone number.
+            # Log the path only: the query string can hold an email address.
             logger.exception("Unhandled error on %s %s", scope.get("method"), scope.get("path"))
             if response_started:  # too late to change the reply
                 raise

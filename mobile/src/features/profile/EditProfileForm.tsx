@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import { View, type TextInputInstance } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { prettyPhone } from '../../domain/phone';
 import type { User } from '../../domain/types';
 import { AppError } from '../../services/errors';
 import { useServices } from '../../services/useServices';
@@ -27,7 +26,7 @@ const NAME_MAX = 50;
 
 /**
  * Edit Profile (specs § 13.1; app.js `R.editProfile`): the photo (camera, gallery or remove) and the name. The username
- * is the recovery key and the phone would need its own code, so both are shown but locked. `user` is what is stored now.
+ * is the recovery key and the email would need its own code, so both are shown but locked. `user` is what is stored now.
  */
 export function EditProfileForm({ user }: { user: User }) {
   const { space } = useTheme();
@@ -104,7 +103,7 @@ export function EditProfileForm({ user }: { user: User }) {
           error={error}
         />
         <ReadOnlyField label="Username" value={`@${user.username}`} why="Your recovery key, so it can’t be changed." />
-        {!!user.phone && <ReadOnlyField label="Phone number" value={prettyPhone(user.phone)} why="Changing your number isn’t available yet." />}
+        {!!user.email && <ReadOnlyField label="Email" value={user.email} why="Changing your email isn’t available yet." />}
       </View>
 
       <BottomSheet visible={photoOpen} onClose={() => setPhotoOpen(false)} title="Profile photo">

@@ -2,13 +2,13 @@
 
 import pytest
 
-from tests.helpers import PHONES, auth, create_space, register
+from tests.helpers import EMAILS, auth, create_space, register
 
 
 @pytest.fixture
 def people(client):
     """alice, bob, bobby, carol and alex are signed up. alice and bob share a space (they are friends)."""
-    tokens = {name: register(client, name) for name in PHONES}
+    tokens = {name: register(client, name) for name in EMAILS}
     create_space(client, tokens["alice"], "Trip", ["bob"])
     return tokens
 
@@ -36,24 +36,21 @@ def test_you_never_find_yourself(client, people):
     assert usernames(search(client, people["alice"], "alice")) == []
 
 
-def test_a_half_typed_phone_number_finds_nobody(client, people):
-    assert usernames(search(client, people["alice"], "98765")) == []
-    assert usernames(search(client, people["alice"], "9876543")) == []
-
-
-def test_a_complete_phone_number_finds_exactly_that_person(client, people):
-    assert usernames(search(client, people["alice"], PHONES["carol"])) == ["carol"]
-    assert usernames(search(client, people["alice"], "+91 98765 43213")) == ["carol"]
+def test_an_email_address_finds_nobody(client, people):
+    # people are found by username only: not by a whole address, and not by the part before the '@'
+    assert usernames(search(client, people["alice"], EMAILS["carol"])) == []
+    assert usernames(search(client, people["alice"], "carol@")) == []
+    assert usernames(search(client, people["alice"], "@example.com")) == []
 
 
 def test_is_friend_is_reported(client, people):
-    by_phone = search(client, people["alice"], PHONES["bob"]).json()
-    assert by_phone == [{"username": "bob", "name": "Bob", "is_friend": True}]
-    stranger = search(client, people["alice"], PHONES["carol"]).json()
-    assert stranger[0]["is_friend"] is False
+    friend = search(client, people["alice"], "bob").json()
+    assert friend[0] == {"username": "bob", "name": "Bob", "is_friend": True}
+    stranger = search(client, people["alice"], "car").json()
+    assert stranger == [{"username": "carol", "name": "Carol", "is_friend": False}]
 
 
-def test_results_never_include_the_phone_number(client, people):
+def test_results_never_include_an_email_address(client, people):
     for row in search(client, people["alice"], "bob").json():
         assert set(row) == {"username", "name", "is_friend"}
 
@@ -61,7 +58,7 @@ def test_results_never_include_the_phone_number(client, people):
 def test_at_most_ten_rows(client):
     tokens = register(client, "alice")
     for i in range(12):
-        register(client, f"user{i:02d}", phone=f"90000000{i:02d}")
+        register(client, f"user{i:02d}", email=f"user{i:02d}@example.com")
     assert len(usernames(search(client, tokens, "user"))) == 10
 
 

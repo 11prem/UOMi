@@ -64,7 +64,7 @@ def create_app() -> FastAPI:
         """Liveness probe: answers 200 while the process is up. No sign-in, and it touches no data."""
         return {"status": "ok"}
 
-    install_access_log_redaction()  # keep search terms (phone numbers) out of the access log
+    install_access_log_redaction()  # keep search terms and email addresses out of the access log
     return application
 
 

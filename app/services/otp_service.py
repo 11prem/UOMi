@@ -1,4 +1,4 @@
-"""Texted one-time codes, shared by sign-up verification (`PendingSignup`) and forgot password (`PasswordReset`).
+"""Emailed one-time codes, shared by sign-up verification (`PendingSignup`) and forgot password (`PasswordReset`).
 
 The rules (specs § 3.4), all enforced here so the two flows cannot drift apart:
   - A code is valid OTP_TTL_MINUTES (5). Expired: `code_expired`.
@@ -6,13 +6,13 @@ The rules (specs § 3.4), all enforced here so the two flows cannot drift apart:
     OTP_LOCK_MINUTES (10): `otp_locked` with `retry_after_seconds`. While locked every guess is refused, the right
     code included, and so is "resend".
   - "Resend code" gives the SAME request a fresh code, after OTP_RESEND_COOLDOWN_SECONDS (30): `resend_too_soon`.
-    A request gets at most OTP_MAX_SENDS_PER_REQUEST texts (3), the first included.
-  - A phone number (sign-up) or typed username (forgot) can start at most OTP_MAX_REQUESTS_PER_HOUR requests an
-    hour, and the whole API sends at most SMS_DAILY_CAP texts a UTC day. These limits hold under a parallel burst.
+    A request gets at most OTP_MAX_SENDS_PER_REQUEST emails (3), the first included.
+  - An email address (sign-up) or typed username (forgot) can start at most OTP_MAX_REQUESTS_PER_HOUR requests an
+    hour, and the whole API sends at most EMAIL_DAILY_CAP emails a UTC day. These limits hold under a parallel burst.
 Each of these has its own error code, so the app can show the spec's own words for each.
 
 Both tables hold the same columns for this (`code_hash`, `attempts`, `locked_until`, `send_count`, `last_sent_at`,
-`expires_at`, `valid_until`, `phone`), so every function here takes the model class.
+`expires_at`, `valid_until`, `email`), so every function here takes the model class.
 """
 
 import logging
@@ -20,7 +20,6 @@ import math
 import secrets
 from datetime import datetime, timedelta
 
-import phonenumbers
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -29,10 +28,10 @@ from app.config import settings
 from app.models.password_reset import PasswordReset
 from app.models.pending_signup import PendingSignup
 from app.models.user import User
-from app.services import sms_service
+from app.services import email_service
 from app.utils import security
 from app.utils.errors import api_error
-from app.utils.validators import mask_phone
+from app.utils.validators import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -86,58 +85,59 @@ def resend_too_soon_error(seconds: float):
 # --- sending ------------------------------------------------------------------------------------------
 
 
-def send_code_text(phone: str, code: str) -> None:
+def send_code_email(email: str, code: str) -> None:
     """Runs after the reply has gone out. A failure is logged, never raised: it cannot change the reply."""
     try:
-        sms_service.send_sms(
-            phone,
+        email_service.send_email(
+            email,
+            "Your UOMi code",
             f"Your UOMi code is {code}. It expires in {settings.OTP_TTL_MINUTES} minutes. Do not share it with anyone.",
         )
     except Exception:
-        logger.exception("Could not send the one-time code text")
+        logger.exception("Could not send the one-time code email")
 
 
-def fake_masked_phone(db: Session, username: str) -> str:
-    """The masked number shown for a username that does not exist, so the reply looks like any other.
+FAKE_LOCAL_LENGTHS = range(5, 11)  # a made-up local part is this many characters, like the names real people use
+_FAKE_LOCAL_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-    It is derived from the username under the OTP key: asking again for the same name gives the same number, as it
-    would for a real account. Its country code and length are copied from a real user's number (chosen by the same
-    key), so the mix of countries matches the real accounts. A made-up number that was always +91 would give away
-    every real account with a number from anywhere else.
+
+def fake_masked_email(db: Session, username: str) -> str:
+    """The masked email shown for a username that does not exist, so the reply looks like any other.
+
+    It is derived from the username under the OTP key: asking again for the same name gives the same address, as it
+    would for a real account. Its domain is copied from a real user's email (chosen by the same key), so the mix of
+    domains matches the real accounts. A made-up address that was always at one fixed domain would give away every
+    real account whose email is anywhere else. With no users at all it falls back to example.com.
     """
-    digest = security.keyed_digest("made-up-phone", username)
-    country, length = settings.DEFAULT_COUNTRY_CODE.lstrip("+"), 10
+    digest = security.keyed_digest("made-up-email", username)
+    domain = "example.com"
     live = User.deleted_at.is_(None)
     count = db.scalar(select(func.count()).select_from(User).where(live)) or 0
     if count:
         pick = int.from_bytes(digest[16:20], "big") % count
-        real_phone = db.scalar(select(User.phone).where(live).order_by(User.username).offset(pick).limit(1))
-        try:
-            number = phonenumbers.parse(real_phone, None)
-            country, length = str(number.country_code), len(str(number.national_number))
-        except phonenumbers.NumberParseException:
-            pass  # keep the default shape
-    digits = [str(byte % 10) for byte in digest[:length]]
-    digits[0] = str(6 + digest[length] % 4)  # no number starts with 0 or 1 (a trunk or an emergency prefix)
-    return mask_phone(f"+{country}{''.join(digits)}")
+        real_email = db.scalar(select(User.email).where(live).order_by(User.username).offset(pick).limit(1))
+        domain = real_email.partition("@")[2] or domain
+    length = FAKE_LOCAL_LENGTHS[digest[20] % len(FAKE_LOCAL_LENGTHS)]
+    local = "".join(_FAKE_LOCAL_ALPHABET[byte % len(_FAKE_LOCAL_ALPHABET)] for byte in digest[:length])
+    return mask_email(f"{local}@{domain}")
 
 
 # --- limits -------------------------------------------------------------------------------------------
 
 
 def enforce_daily_code_cap(db: Session, now: datetime, *, mine: bool = False, warn: bool = True) -> None:
-    """The last-resort brake on the SMS bill: at most SMS_DAILY_CAP texts a (UTC) day, for everyone together.
+    """The last-resort brake on the email bill: at most EMAIL_DAILY_CAP emails a (UTC) day, for everyone together.
 
-    Counted from `send_count` of the rows created today (the first text and every resend), in both tables. A
+    Counted from `send_count` of the rows created today (the first email and every resend), in both tables. A
     sign-up's row is kept after it is verified (marked used), and rows are never deleted on the day they are made,
     so the count cannot be reset by finishing or abandoning sign-ups. A resend of a request made before midnight is
     counted on the day the request began.
 
-    `mine` says the request being checked is already recorded (and committed) and is the newest text counted: it is
-    refused when everyone else's texts already fill the cap. Either way the rule is the same: refused when the OTHER
-    texts of the day are `cap` or more.
+    `mine` says the request being checked is already recorded (and committed) and is the newest email counted: it is
+    refused when everyone else's emails already fill the cap. Either way the rule is the same: refused when the OTHER
+    emails of the day are `cap` or more.
     """
-    cap = settings.SMS_DAILY_CAP
+    cap = settings.EMAIL_DAILY_CAP
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     total = sum(
         db.scalar(select(func.coalesce(func.sum(model.send_count), 0)).where(model.created_at >= day_start)) or 0
@@ -155,7 +155,7 @@ def enforce_daily_code_cap(db: Session, now: datetime, *, mine: bool = False, wa
 def _enforce_start_limits(db: Session, model, key_column, key_value: str, now: datetime, mine_id: int | None) -> None:
     """At most OTP_MAX_REQUESTS_PER_HOUR requests per key in an hour, and the resend cooldown between them.
 
-    The key is the phone number for sign-ups and the typed username for forgot password. Requests for a name that
+    The key is the email address for sign-ups and the typed username for forgot password. Requests for a name that
     does not exist are written and counted exactly like real ones, so these refusals reveal nothing.
     """
     recent = db.scalars(
@@ -205,7 +205,7 @@ def check_code(db: Session, model, row, code: str, now: datetime) -> None:
     """
     # Everything needed is copied out first. A commit marks the row's attributes as stale, and reading a stale one
     # re-queries the row, which a parallel request may have deleted (a sign-up that was just used up).
-    row_id, stored_hash, phone = row.id, row.code_hash, row.phone
+    row_id, stored_hash, email = row.id, row.code_hash, row.email
     locked_until, expires_at = row.locked_until, row.expires_at
 
     if locked_until is not None:
@@ -246,7 +246,7 @@ def check_code(db: Session, model, row, code: str, now: datetime) -> None:
             raise locked_error(settings.OTP_LOCK_MINUTES * 60)
         raise code_expired_error()
 
-    if security.safe_equal(stored_hash, security.hash_otp(phone, code)):
+    if security.safe_equal(stored_hash, security.hash_otp(email, code)):
         return
     if attempts >= settings.OTP_MAX_ATTEMPTS:
         lock_until = now + timedelta(minutes=settings.OTP_LOCK_MINUTES)
@@ -265,10 +265,10 @@ def check_code(db: Session, model, row, code: str, now: datetime) -> None:
 
 
 def renew_code(db: Session, model, row, now: datetime) -> str:
-    """The "Resend code" link: a fresh code for the same request. Returns it; the caller texts it.
+    """The "Resend code" link: a fresh code for the same request. Returns it; the caller emails it.
 
     Refused while locked (so the lock cannot be skipped by asking again), inside the cooldown, and after
-    OTP_MAX_SENDS_PER_REQUEST texts. The new code starts from zero wrong guesses.
+    OTP_MAX_SENDS_PER_REQUEST emails. The new code starts from zero wrong guesses.
     """
     if row.locked_until is not None and row.locked_until > now:
         raise locked_error((row.locked_until - now).total_seconds())
@@ -286,7 +286,7 @@ def renew_code(db: Session, model, row, now: datetime) -> str:
         update(model)
         .where(model.id == row.id, model.send_count == row.send_count)  # a parallel resend that won leaves 0 rows here
         .values(
-            code_hash=security.hash_otp(row.phone, code),
+            code_hash=security.hash_otp(row.email, code),
             attempts=0,
             locked_until=None,
             send_count=row.send_count + 1,

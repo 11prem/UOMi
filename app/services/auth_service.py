@@ -1,13 +1,13 @@
 """Sign up, sign in, logout and the forgot-password flow.
 
 Sign up has two steps, and the account exists only after the second (specs § 4.3):
-  POST /auth/register          checks the form, texts a code, keeps a `PendingSignup`. No account yet.
+  POST /auth/register          checks the form, emails a code, keeps a `PendingSignup`. No account yet.
   POST /auth/otp/resend        a fresh code for the same sign-up (30 s cooldown).
   POST /auth/register/verify   right code -> the account is created and signed in.
-A sign-up that is never verified just expires: the username and phone number stay free.
+A sign-up that is never verified just expires: the username and email address stay free.
 
 Forgot password has three steps and two timeouts (specs § 4.5):
-  POST /auth/forgot       a username -> a code is texted to ITS phone, and the masked number comes back. The reply is
+  POST /auth/forgot       a username -> a code is emailed to ITS address, and the masked email comes back. The reply is
                           the same for a username that does not exist.
   POST /auth/verify-otp   reset id + right code -> reset token, valid RESET_SESSION_TIMEOUT_MINUTES.
   POST /auth/reset        reset token + new password -> password changed, token used up, all sessions ended, and every
@@ -44,11 +44,11 @@ from app.schemas.user import (
 from app.services import otp_service, session_service
 from app.utils import security
 from app.utils.errors import api_error, forbidden
-from app.utils.validators import mask_phone
+from app.utils.validators import mask_email
 
 logger = logging.getLogger(__name__)
 
-FORGOT_MESSAGE = "If that username exists, a code has been texted to its phone."
+FORGOT_MESSAGE = "If that username exists, a code has been emailed to its address."
 
 
 def _code_lifetime() -> int:
@@ -60,11 +60,11 @@ def _code_lifetime() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _check_free(db: Session, username: str, phone: str) -> None:
+def _check_free(db: Session, username: str, email: str) -> None:
     if db.get(User, username) is not None:
         raise api_error(409, "username_taken", "Username already taken")
-    if db.scalar(select(User.username).where(User.phone == phone)) is not None:
-        raise api_error(409, "phone_taken", "Phone number already registered")
+    if db.scalar(select(User.username).where(User.email == email)) is not None:
+        raise api_error(409, "email_taken", "Email already registered")
 
 
 def active_user(db: Session, username: str) -> User | None:
@@ -78,21 +78,21 @@ def username_available(db: Session, username: str) -> bool:
     return db.get(User, username) is None
 
 
-def phone_available(db: Session, phone: str) -> bool:
-    """True when no account uses this number. Tells anyone whether a number is registered: it is limited per address."""
-    return db.scalar(select(User.username).where(User.phone == phone)) is None
+def email_available(db: Session, email: str) -> bool:
+    """True when no account uses this address. Tells anyone whether an email is registered: it is limited per address."""
+    return db.scalar(select(User.username).where(User.email == email)) is None
 
 
 def start_signup(db: Session, data: RegisterRequest, background_tasks: BackgroundTasks) -> SignupStarted:
-    """Create Account: check the form, text a code, remember the sign-up. The account is NOT created yet.
+    """Create Account: check the form, email a code, remember the sign-up. The account is NOT created yet.
 
-    The limits are by phone number: OTP_MAX_REQUESTS_PER_HOUR sign-ups an hour and the resend cooldown between them
+    The limits are by email address: OTP_MAX_REQUESTS_PER_HOUR sign-ups an hour and the resend cooldown between them
     (otp_service.enforce_start_limits), then the daily cap. An unverified sign-up reserves nothing, so someone
-    else can still register the same username or number: whoever verifies first gets it.
+    else can still register the same username or email: whoever verifies first gets it.
     """
     now = utcnow()
-    _check_free(db, data.username, data.phone)
-    otp_service.check_limits(db, PendingSignup, PendingSignup.phone, data.phone, now)  # a cheap refusal, before the hash
+    _check_free(db, data.username, data.email)
+    otp_service.check_limits(db, PendingSignup, PendingSignup.email, data.email, now)  # a cheap refusal, before the hash
 
     # Finished and abandoned sign-ups are forgotten a day after they end, never sooner: the daily cap counts these rows.
     db.execute(delete(PendingSignup).where(PendingSignup.valid_until <= now - timedelta(days=1)))
@@ -102,9 +102,9 @@ def start_signup(db: Session, data: RegisterRequest, background_tasks: Backgroun
         public_id=otp_service.new_public_id(otp_service.SIGNUP_PREFIX),
         username=data.username,
         name=data.name,
-        phone=data.phone,
+        email=data.email,
         password_hash=security.hash_password(data.password),
-        code_hash=security.hash_otp(data.phone, code),
+        code_hash=security.hash_otp(data.email, code),
         created_at=now,
         last_sent_at=now,
         expires_at=now + timedelta(minutes=settings.OTP_TTL_MINUTES),
@@ -116,19 +116,19 @@ def start_signup(db: Session, data: RegisterRequest, background_tasks: Backgroun
     db.commit()
     # Recorded and committed BEFORE the limits are counted again: ten parallel requests would otherwise all read "0 so
     # far" and all pass. A request that is over a limit takes its own row back out (otp_service.check_limits).
-    otp_service.check_limits(db, PendingSignup, PendingSignup.phone, data.phone, now, mine_id=row_id)
-    # After the reply has gone out: a real SMS provider takes hundreds of milliseconds.
-    background_tasks.add_task(otp_service.send_code_text, data.phone, code)
+    otp_service.check_limits(db, PendingSignup, PendingSignup.email, data.email, now, mine_id=row_id)
+    # After the reply has gone out: a real mail server takes hundreds of milliseconds.
+    background_tasks.add_task(otp_service.send_code_email, data.email, code)
     return SignupStarted(
         pending_id=public_id,
-        masked_phone=mask_phone(data.phone),
+        masked_email=mask_email(data.email),
         expires_in_seconds=_code_lifetime(),
         resend_after_seconds=settings.OTP_RESEND_COOLDOWN_SECONDS,
     )
 
 
 def verify_signup(db: Session, pending_id: str, code: str) -> TokenPair:
-    """Verify phone: the right code creates the account and signs the user in, in one transaction."""
+    """Verify email: the right code creates the account and signs the user in, in one transaction."""
     now = utcnow()
     pending = db.scalar(select(PendingSignup).where(PendingSignup.public_id == pending_id))
     if pending is None or pending.used_at is not None:
@@ -136,12 +136,12 @@ def verify_signup(db: Session, pending_id: str, code: str) -> TokenPair:
     if pending.valid_until <= now:
         raise otp_service.request_expired_error()
     # Copied out before checking the code, which commits: a parallel request may delete this row in between.
-    pending_row_id, username, name, phone, password_hash = (
-        pending.id, pending.username, pending.name, pending.phone, pending.password_hash,
+    pending_row_id, username, name, email, password_hash = (
+        pending.id, pending.username, pending.name, pending.email, pending.password_hash,
     )
     otp_service.check_code(db, PendingSignup, pending, code, now)
     # Used up with one conditional UPDATE, BEFORE anything else: of two parallel requests with the same right code,
-    # exactly one updates the row, and the other is told the sign-up is gone. The row is kept (the daily text cap
+    # exactly one updates the row, and the other is told the sign-up is gone. The row is kept (the daily code cap
     # counts it) but its password hash is wiped, and it ends now.
     claimed = db.execute(
         update(PendingSignup)
@@ -153,18 +153,18 @@ def verify_signup(db: Session, pending_id: str, code: str) -> TokenPair:
         db.rollback()
         raise otp_service.not_found_error()
     try:
-        _check_free(db, username, phone)  # someone ELSE may have verified the same username or number first
+        _check_free(db, username, email)  # someone ELSE may have verified the same username or email first
     except HTTPException:
         db.rollback()  # the claim is undone: this sign-up stays open (it can never succeed, but it is not "used")
         raise
-    db.add(User(username=username, name=name, phone=phone, password_hash=password_hash))
+    db.add(User(username=username, name=name, email=email, password_hash=password_hash))
     try:
         db.flush()
         tokens = session_service.create_session(db, username)
         db.commit()
-    except IntegrityError:  # someone else took the username or phone a moment ago
+    except IntegrityError:  # someone else took the username or email a moment ago
         db.rollback()
-        raise api_error(409, "already_registered", "That username or phone number is already registered.") from None
+        raise api_error(409, "already_registered", "That username or email is already registered.") from None
     return tokens
 
 
@@ -185,8 +185,8 @@ def resend_code(db: Session, ref: str, background_tasks: BackgroundTasks) -> Res
         raise otp_service.request_expired_error()
 
     code = otp_service.renew_code(db, model, row, now)
-    if model is PendingSignup or row.username is not None:  # nothing is texted for a username that does not exist
-        background_tasks.add_task(otp_service.send_code_text, row.phone, code)
+    if model is PendingSignup or row.username is not None:  # nothing is emailed for a username that does not exist
+        background_tasks.add_task(otp_service.send_code_email, row.email, code)
     return ResendOut(expires_in_seconds=_code_lifetime(), resend_after_seconds=settings.OTP_RESEND_COOLDOWN_SECONDS)
 
 
@@ -278,11 +278,11 @@ def logout(db: Session, session_id: str) -> None:
 
 
 def request_password_reset(db: Session, username: str, background_tasks: BackgroundTasks) -> ForgotResponse:
-    """Forgot Password, step a: text a code to the username's phone and say which number (masked).
+    """Forgot Password, step a: email a code to the username's address and say which one (masked).
 
     The reply is identical, in content and in how limits apply, for a username that does not exist: a request row is
-    written and counted either way, nothing is texted for a made-up one, and the masked number shown for it is a
-    stable made-up number (otp_service.fake_masked_phone). The limits are by the typed username.
+    written and counted either way, nothing is emailed for a made-up one, and the masked email shown for it is a
+    stable made-up address (otp_service.fake_masked_email). The limits are by the typed username.
     """
     now = utcnow()
     otp_service.check_limits(db, PasswordReset, PasswordReset.requested_username, username, now)  # a cheap refusal first
@@ -294,10 +294,10 @@ def request_password_reset(db: Session, username: str, background_tasks: Backgro
     reset = PasswordReset(
         public_id=otp_service.new_public_id(otp_service.RESET_PREFIX),
         requested_username=username,
-        phone=user.phone if user is not None else "",
+        email=user.email if user is not None else "",
         username=user.username if user is not None else None,
         # A made-up request has no real code: nothing was sent, and no guess can ever match this value.
-        code_hash=security.hash_otp(user.phone, code) if user is not None else otp_service.NEVER_MATCHES,
+        code_hash=security.hash_otp(user.email, code) if user is not None else otp_service.NEVER_MATCHES,
         created_at=now,
         last_sent_at=now,
         expires_at=now + timedelta(minutes=settings.OTP_TTL_MINUTES),
@@ -313,11 +313,11 @@ def request_password_reset(db: Session, username: str, background_tasks: Backgro
     if user is not None:
         # Sent AFTER the reply, never inline: an inline send would make the reply slower for real usernames, which
         # tells an attacker who has an account.
-        background_tasks.add_task(otp_service.send_code_text, user.phone, code)
+        background_tasks.add_task(otp_service.send_code_email, user.email, code)
 
     return ForgotResponse(
         reset_id=public_id,
-        masked_phone=mask_phone(user.phone) if user is not None else otp_service.fake_masked_phone(db, username),
+        masked_email=mask_email(user.email) if user is not None else otp_service.fake_masked_email(db, username),
         message=FORGOT_MESSAGE,
         expires_in_seconds=_code_lifetime(),
         resend_after_seconds=settings.OTP_RESEND_COOLDOWN_SECONDS,

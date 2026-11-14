@@ -1,4 +1,4 @@
-"""The demo seed must give kabir.r exactly what the phone app's built-in demo data gives."""
+"""The demo seed must give kabir.r exactly what the mobile app's built-in demo data gives."""
 
 import pytest
 from sqlalchemy import select

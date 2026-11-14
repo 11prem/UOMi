@@ -1,4 +1,4 @@
-"""Forgot password: username -> masked phone and texted code -> reset token -> new password, with every timeout."""
+"""Forgot password: username -> masked email and emailed code -> reset token -> new password, with every timeout."""
 
 import re
 from datetime import timedelta
@@ -9,11 +9,11 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.database import SessionLocal, utcnow
 from app.models.password_reset import PasswordReset
-from tests.helpers import PASSWORD, PHONES, auth, db_exec, error_code, last_code, register, rewind
+from tests.helpers import PASSWORD, EMAILS, auth, db_exec, error_code, last_code, register, rewind
 
-PHONE = PHONES["alice"]
+EMAIL = EMAILS["alice"]
 NEW_PASSWORD = "brand-new-password-1"
-MASK = re.compile(r"\+91 \d\d\*{6}\d\d")  # the shape of a masked +91 number: "+91 98******10"
+MASK = re.compile(r"[a-z0-9]{2}\*+@[a-z.]+")  # the shape of a masked email: "al***@example.com"
 
 
 def forgot(client, username="alice"):
@@ -21,10 +21,10 @@ def forgot(client, username="alice"):
 
 
 def request_code(client, username="alice") -> tuple[str, str]:
-    """Ask for a code. Returns the reset id and the code, read out of the text message the app 'sent'."""
+    """Ask for a code. Returns the reset id and the code, read out of the email the app 'sent'."""
     response = forgot(client, username)
     assert response.status_code == 202, response.text
-    return response.json()["reset_id"], last_code(PHONES[username])
+    return response.json()["reset_id"], last_code(EMAILS[username])
 
 
 def verify(client, reset_id, code):
@@ -47,7 +47,7 @@ def login(client, password):
 
 
 def age_requests(seconds: int) -> None:
-    """Pretend the earlier requests, and the texts sent for them, happened `seconds` ago."""
+    """Pretend the earlier requests, and the emails sent for them, happened `seconds` ago."""
     with SessionLocal() as session:
         for row in session.scalars(select(PasswordReset)):
             row.created_at -= timedelta(seconds=seconds)
@@ -59,10 +59,10 @@ PAST_COOLDOWN = settings.OTP_RESEND_COOLDOWN_SECONDS + 1
 
 
 @pytest.fixture
-def alice(client, sms_outbox):
-    """Alice has an account. The text her sign-up code came in is cleared, so only reset codes remain."""
+def alice(client, email_outbox):
+    """Alice has an account. The email her sign-up code came in is cleared, so only reset codes remain."""
     tokens = register(client, "alice")
-    sms_outbox.clear()
+    email_outbox.clear()
     return tokens
 
 
@@ -77,23 +77,23 @@ def otp_codes(monkeypatch):
     return use
 
 
-# --- Step a: the username, then the masked phone and the text ---------------
+# --- Step a: the username, then the masked email and the emailed code ---------------
 
 
-def test_the_reply_shows_the_masked_phone_and_texts_the_code(client, alice, sms_outbox):
+def test_the_reply_shows_the_masked_email_and_emails_the_code(client, alice, email_outbox):
     response = forgot(client)
 
     assert response.status_code == 202
     body = response.json()
-    assert body["masked_phone"] == "+91 98******10"  # the first 2 and last 2 digits of the national number (specs § 1)
+    assert body["masked_email"] == "al***@example.com"  # the first 2 letters of the part before the '@' stay visible
     assert body["expires_in_seconds"] == settings.OTP_TTL_MINUTES * 60
     assert body["resend_after_seconds"] == settings.OTP_RESEND_COOLDOWN_SECONDS == 30
     assert body["reset_id"].startswith("pw_")
-    assert [phone for phone, _ in sms_outbox] == ["+919876543210"]
-    assert "Your UOMi code is" in sms_outbox[0][1]
+    assert [to for to, _ in email_outbox] == ["alice@example.com"]
+    assert "Your UOMi code is" in email_outbox[0][1]
 
 
-def test_an_unknown_username_gets_the_same_kind_of_reply_and_no_text(client, alice, sms_outbox):
+def test_an_unknown_username_gets_the_same_kind_of_reply_and_no_email(client, alice, email_outbox):
     known = forgot(client, "alice")
     unknown = forgot(client, "nobody.here")
 
@@ -101,38 +101,44 @@ def test_an_unknown_username_gets_the_same_kind_of_reply_and_no_text(client, ali
     assert set(known.json()) == set(unknown.json())  # the same fields
     for field in ("message", "expires_in_seconds", "resend_after_seconds"):
         assert known.json()[field] == unknown.json()[field]
-    assert MASK.fullmatch(unknown.json()["masked_phone"])  # it has a masked number too, in the same format
+    assert MASK.fullmatch(unknown.json()["masked_email"])  # it has a masked email too, in the same format
     assert known.json()["reset_id"] != unknown.json()["reset_id"]
-    assert len(sms_outbox) == 1  # only alice's phone was texted
+    assert len(email_outbox) == 1  # only alice's address was emailed
 
 
-def test_the_made_up_number_for_an_unknown_username_is_always_the_same(client, alice):
-    first = forgot(client, "nobody.here").json()["masked_phone"]
+def test_the_made_up_email_for_an_unknown_username_is_always_the_same(client, alice):
+    first = forgot(client, "nobody.here").json()["masked_email"]
     age_requests(PAST_COOLDOWN)
-    second = forgot(client, "nobody.here").json()["masked_phone"]
-    other = forgot(client, "someone.else").json()["masked_phone"]
+    second = forgot(client, "nobody.here").json()["masked_email"]
+    other = forgot(client, "someone.else").json()["masked_email"]
 
-    assert first == second  # a different number each time would give it away
+    assert first == second  # a different address each time would give it away
     assert other != first
 
 
-def test_made_up_numbers_follow_the_countries_of_the_real_accounts(client, alice):
-    # If every made-up number were +91, any other prefix in a reply would prove the username exists.
-    register(client, "dave", phone="+16502530000")
+def test_made_up_emails_follow_the_domains_of_the_real_accounts(client, alice):
+    # If every made-up address were at one domain, any other domain in a reply would prove the username exists.
+    register(client, "dave", email="dave@mail.test")
     from app.services import otp_service
 
     with SessionLocal() as session:
-        shown = [otp_service.fake_masked_phone(session, f"ghost{i}") for i in range(60)]
+        shown = [otp_service.fake_masked_email(session, f"ghost{i}") for i in range(60)]
 
-    prefixes = {number.split(" ")[0] for number in shown}
-    assert prefixes == {"+1", "+91"}  # both real countries appear, and no other
-    for number in shown:
-        assert re.fullmatch(r"\+(91 \d\d\*{6}\d\d|1 \d\d\*{6}\d\d)", number), number  # the same shapes as real ones
+    assert {email.partition("@")[2] for email in shown} == {"example.com", "mail.test"}  # both real domains, and no other
+    for email in shown:
+        assert MASK.fullmatch(email) and email.index("@") >= 5, email  # the same shape as real ones: 2 letters, 3 or more stars
 
 
-def test_the_username_can_be_typed_in_any_case_with_spaces(client, alice, sms_outbox):
+def test_the_made_up_email_falls_back_to_example_com_when_nobody_has_signed_up(client):
+    from app.services import otp_service
+
+    with SessionLocal() as session:
+        assert otp_service.fake_masked_email(session, "ghost").endswith("@example.com")
+
+
+def test_the_username_can_be_typed_in_any_case_with_spaces(client, alice, email_outbox):
     assert forgot(client, "  ALICE ").status_code == 202
-    assert len(sms_outbox) == 1
+    assert len(email_outbox) == 1
 
 
 def test_the_code_is_not_stored_in_plain_text(client, alice):
@@ -143,24 +149,24 @@ def test_the_code_is_not_stored_in_plain_text(client, alice):
     assert len(row.code_hash) == 64  # an HMAC-SHA256, not the code
 
 
-def test_an_old_phone_number_request_is_no_longer_a_thing(client, alice):
-    assert client.post("/auth/forgot", json={"phone": PHONE}).status_code == 422
+def test_forgot_password_takes_a_username_not_an_email_address(client, alice):
+    assert client.post("/auth/forgot", json={"email": EMAIL}).status_code == 422
 
 
 # --- Limits on asking for codes ---------------------------------------------
 
 
-def test_resend_cooldown_applies_to_asking_again(client, alice, sms_outbox):
+def test_resend_cooldown_applies_to_asking_again(client, alice, email_outbox):
     assert forgot(client).status_code == 202
     too_soon = forgot(client)
     assert too_soon.status_code == 429
     assert error_code(too_soon) == "resend_too_soon"
     assert int(too_soon.headers["Retry-After"]) > 0
-    assert len(sms_outbox) == 1
+    assert len(email_outbox) == 1
 
     age_requests(PAST_COOLDOWN)
     assert forgot(client).status_code == 202
-    assert len(sms_outbox) == 2
+    assert len(email_outbox) == 2
 
 
 def test_unknown_usernames_are_limited_exactly_like_known_ones(client):
@@ -169,14 +175,14 @@ def test_unknown_usernames_are_limited_exactly_like_known_ones(client):
     assert again.status_code == 429 and error_code(again) == "resend_too_soon"
 
 
-def test_at_most_three_requests_per_hour_for_a_username(client, alice, sms_outbox):
+def test_at_most_three_requests_per_hour_for_a_username(client, alice, email_outbox):
     for _ in range(settings.OTP_MAX_REQUESTS_PER_HOUR):
         assert forgot(client).status_code == 202
         age_requests(PAST_COOLDOWN)  # past the cooldown, inside the hour
     blocked = forgot(client)
     assert blocked.status_code == 429
     assert error_code(blocked) == "too_many_requests"
-    assert len(sms_outbox) == settings.OTP_MAX_REQUESTS_PER_HOUR
+    assert len(email_outbox) == settings.OTP_MAX_REQUESTS_PER_HOUR
 
 
 def test_unknown_usernames_hit_the_hourly_limit_too(client):
@@ -226,7 +232,7 @@ def test_the_lock_ends_after_ten_minutes_but_by_then_the_code_has_expired(client
         verify(client, reset_id, "000000")
     assert error_code(verify(client, reset_id, "123456")) == "otp_locked"
 
-    rewind(PasswordReset, settings.OTP_LOCK_MINUTES * 60 + 1)  # ten minutes pass: the code, the lock and the text age together
+    rewind(PasswordReset, settings.OTP_LOCK_MINUTES * 60 + 1)  # ten minutes pass: the code, the lock and the email age together
 
     expired = verify(client, reset_id, "123456")
     assert expired.status_code == 400 and error_code(expired) == "code_expired"  # not accepted, and not "locked" any more
@@ -301,7 +307,7 @@ def test_a_made_up_username_behaves_like_a_real_one_when_guessed_at(client):
     assert answers == ["invalid_code"] * (settings.OTP_MAX_ATTEMPTS - 1) + ["otp_locked"]
 
 
-def test_resending_works_on_a_made_up_username_and_sends_nothing(client, sms_outbox):
+def test_resending_works_on_a_made_up_username_and_sends_nothing(client, email_outbox):
     reset_id = forgot(client, "nobody.here").json()["reset_id"]
     age_requests(PAST_COOLDOWN)
 
@@ -309,13 +315,13 @@ def test_resending_works_on_a_made_up_username_and_sends_nothing(client, sms_out
 
     assert response.status_code == 200
     assert response.json() == {"expires_in_seconds": 300, "resend_after_seconds": 30}
-    assert sms_outbox == []
+    assert email_outbox == []
 
 
 # --- Resend code (the link on the code screen) ------------------------------
 
 
-def test_resend_gives_a_fresh_code_and_the_old_one_stops_working(client, alice, sms_outbox, otp_codes):
+def test_resend_gives_a_fresh_code_and_the_old_one_stops_working(client, alice, email_outbox, otp_codes):
     otp_codes("111111", "222222")
     reset_id, _ = request_code(client)
     age_requests(PAST_COOLDOWN)
@@ -324,20 +330,20 @@ def test_resend_gives_a_fresh_code_and_the_old_one_stops_working(client, alice, 
 
     assert response.status_code == 200
     assert response.json() == {"expires_in_seconds": 300, "resend_after_seconds": 30}
-    assert [phone for phone, _ in sms_outbox] == ["+919876543210"] * 2
-    assert last_code(PHONE) == "222222"
+    assert [to for to, _ in email_outbox] == ["alice@example.com"] * 2
+    assert last_code(EMAIL) == "222222"
     assert error_code(verify(client, reset_id, "111111")) == "invalid_code"
     assert verify(client, reset_id, "222222").status_code == 200
 
 
-def test_resend_has_a_thirty_second_cooldown(client, alice, sms_outbox):
+def test_resend_has_a_thirty_second_cooldown(client, alice, email_outbox):
     reset_id, _ = request_code(client)
 
     too_soon = resend(client, reset_id)
 
     assert too_soon.status_code == 429 and error_code(too_soon) == "resend_too_soon"
     assert 0 < too_soon.json()["detail"]["retry_after_seconds"] <= 30
-    assert len(sms_outbox) == 1
+    assert len(email_outbox) == 1
     age_requests(PAST_COOLDOWN)
     assert resend(client, reset_id).status_code == 200
 
@@ -354,7 +360,7 @@ def test_resend_starts_the_wrong_guesses_again(client, alice, otp_codes):
     assert verify(client, reset_id, "222222").status_code == 200
 
 
-def test_a_request_gets_at_most_three_texts(client, alice, sms_outbox):
+def test_a_request_gets_at_most_three_emails(client, alice, email_outbox):
     reset_id, _ = request_code(client)
     for _ in range(settings.OTP_MAX_SENDS_PER_REQUEST - 1):
         age_requests(PAST_COOLDOWN)
@@ -364,7 +370,7 @@ def test_a_request_gets_at_most_three_texts(client, alice, sms_outbox):
     capped = resend(client, reset_id)
 
     assert capped.status_code == 429 and error_code(capped) == "too_many_requests"
-    assert len(sms_outbox) == settings.OTP_MAX_SENDS_PER_REQUEST
+    assert len(email_outbox) == settings.OTP_MAX_SENDS_PER_REQUEST
 
 
 def test_a_verified_request_cannot_be_resent(client, alice):
@@ -388,7 +394,7 @@ def test_resend_is_limited_per_address(client, alice, monkeypatch):
 # --- Step c: setting the new password ---------------------------------------
 
 
-def test_full_reset_flow(client, alice, sms_outbox):
+def test_full_reset_flow(client, alice, email_outbox):
     old_session = alice
     reset_id, code = request_code(client)
 

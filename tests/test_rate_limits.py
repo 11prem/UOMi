@@ -12,7 +12,7 @@ from app.models.login_attempt import LoginAttempt
 from app.models.password_reset import PasswordReset
 from app.models.pending_signup import PendingSignup
 from app.utils.rate_limit import SlidingWindowLimiter, client_ip
-from tests.helpers import PHONES, auth, db_all, error_code, last_code, register, register_payload, start_signup, wrong_code
+from tests.helpers import EMAILS, auth, db_all, error_code, last_code, register, register_payload, start_signup, wrong_code
 
 # --- The limiter -------------------------------------------------------------
 
@@ -100,14 +100,14 @@ def test_client_address_falls_back_to_the_peer_when_the_header_is_short(monkeypa
 
 
 def test_register_is_limited_per_address_and_failed_attempts_count(client, monkeypatch):
-    """Probing for taken usernames and phones is exactly what the limit is for, so a 409 uses the budget too."""
+    """Probing for taken usernames and emails is exactly what the limit is for, so a 409 uses the budget too."""
     monkeypatch.setattr(settings, "REGISTER_MAX_PER_IP_PER_HOUR", 3)
     register(client, "alice")
-    taken_username = client.post("/auth/register", json=register_payload(username="alice", phone=PHONES["bob"]))
-    taken_phone = client.post("/auth/register", json=register_payload(username="bob", phone=PHONES["alice"]))
-    assert (taken_username.status_code, taken_phone.status_code) == (409, 409)
+    taken_username = client.post("/auth/register", json=register_payload(username="alice", email=EMAILS["bob"]))
+    taken_email = client.post("/auth/register", json=register_payload(username="bob", email=EMAILS["alice"]))
+    assert (taken_username.status_code, taken_email.status_code) == (409, 409)
 
-    blocked = client.post("/auth/register", json=register_payload(username="carol", phone=PHONES["carol"]))
+    blocked = client.post("/auth/register", json=register_payload(username="carol", email=EMAILS["carol"]))
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
     assert int(blocked.headers["Retry-After"]) > 0
     assert blocked.json()["detail"]["retry_after_seconds"] == int(blocked.headers["Retry-After"])
@@ -120,7 +120,7 @@ def test_each_address_has_its_own_budget_behind_a_trusted_proxy(client, monkeypa
     def sign_up(username: str, address: str):
         return client.post(
             "/auth/register",
-            json=register_payload(username=username, phone=PHONES[username]),
+            json=register_payload(username=username, email=EMAILS[username]),
             headers={"X-Forwarded-For": address},
         )
 
@@ -136,7 +136,7 @@ def test_a_forged_forwarded_header_does_not_dodge_the_limit(client, monkeypatch)
     )
     second = client.post(
         "/auth/register",
-        json=register_payload(username="bob", phone=PHONES["bob"]),
+        json=register_payload(username="bob", email=EMAILS["bob"]),
         headers={"X-Forwarded-For": "198.51.100.2"},
     )
     assert first.status_code == 202 and second.status_code == 429
@@ -167,18 +167,6 @@ def test_search_is_limited_per_address(client, monkeypatch):
     assert search(client, alice, "zz").status_code == 429  # a third person on the same address is stopped too
 
 
-def test_looking_people_up_by_phone_number_has_its_own_tight_limit(client, monkeypatch):
-    monkeypatch.setattr(settings, "PHONE_LOOKUPS_PER_USER_PER_HOUR", 2)
-    alice = register(client, "alice")
-    register(client, "bob")
-    assert search(client, alice, PHONES["bob"]).status_code == 200  # found
-    assert search(client, alice, "9000000001").status_code == 200  # nobody: still counts
-    blocked = search(client, alice, "9000000002")
-    assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
-    assert "phone" in blocked.json()["detail"]["message"]
-    assert search(client, alice, "bo").status_code == 200  # looking people up by name is not affected
-
-
 # --- Forgot password and codes (2.2) ----------------------------------------
 
 
@@ -186,16 +174,16 @@ def forgot(client, username):
     return client.post("/auth/forgot", json={"username": username})
 
 
-def test_forgot_is_limited_per_address_across_usernames(client, sms_outbox, monkeypatch):
+def test_forgot_is_limited_per_address_across_usernames(client, email_outbox, monkeypatch):
     monkeypatch.setattr(settings, "FORGOT_MAX_PER_IP_PER_HOUR", 2)
     register(client, "alice")
-    sms_outbox.clear()  # the sign-up code
+    email_outbox.clear()  # the sign-up code
     assert forgot(client, "alice").status_code == 202
     assert forgot(client, "ghost1").status_code == 202
     blocked = forgot(client, "ghost2")
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
     assert len(db_all(select(PasswordReset))) == 2  # no code was created for the blocked request
-    assert len(sms_outbox) == 1  # only alice has an account
+    assert len(email_outbox) == 1  # only alice has an account
 
 
 def test_verify_otp_is_limited_per_address(client, monkeypatch):
@@ -203,7 +191,7 @@ def test_verify_otp_is_limited_per_address(client, monkeypatch):
     monkeypatch.setattr(settings, "VERIFY_OTP_MAX_PER_IP_PER_HOUR", 4)
     reset_id = forgot(client, "alice").json()["reset_id"]
     for _ in range(3):
-        wrong = client.post("/auth/verify-otp", json={"reset_id": reset_id, "code": wrong_code(last_code(PHONES["alice"]))})
+        wrong = client.post("/auth/verify-otp", json={"reset_id": reset_id, "code": wrong_code(last_code(EMAILS["alice"]))})
         assert wrong.status_code == 400
     blocked = client.post("/auth/verify-otp", json={"reset_id": reset_id, "code": "123456"})
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
@@ -218,12 +206,12 @@ def move_requests_back(days: int) -> None:
         session.commit()
 
 
-def test_daily_code_cap_stops_every_username_alike_and_resets_the_next_day(client, sms_outbox, monkeypatch):
+def test_daily_code_cap_stops_every_username_alike_and_resets_the_next_day(client, email_outbox, monkeypatch):
     for name in ("alice", "bob", "carol"):
         register(client, name)
     move_requests_back(1)  # the sign-up codes belong to an earlier day
-    sms_outbox.clear()
-    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 2)
+    email_outbox.clear()
+    monkeypatch.setattr(settings, "EMAIL_DAILY_CAP", 2)
     assert forgot(client, "alice").status_code == 202
     assert forgot(client, "bob").status_code == 202
 
@@ -232,17 +220,17 @@ def test_daily_code_cap_stops_every_username_alike_and_resets_the_next_day(clien
     for capped in (registered, unknown):  # the answer does not depend on whether the username exists
         assert capped.status_code == 429 and error_code(capped) == "too_many_requests"
         assert int(capped.headers["Retry-After"]) > 0
-    assert len(sms_outbox) == 2
+    assert len(email_outbox) == 2
 
     move_requests_back(1)  # a new UTC day
     assert forgot(client, "carol").status_code == 202
-    assert len(sms_outbox) == 3
+    assert len(email_outbox) == 3
 
 
-def test_the_daily_cap_counts_sign_up_codes_and_resends_too(client, sms_outbox, monkeypatch):
-    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 3)
+def test_the_daily_cap_counts_sign_up_codes_and_resends_too(client, email_outbox, monkeypatch):
+    monkeypatch.setattr(settings, "EMAIL_DAILY_CAP", 3)
     monkeypatch.setattr(settings, "OTP_RESEND_COOLDOWN_SECONDS", 0)
-    started = start_signup(client, "alice")  # 1 text
+    started = start_signup(client, "alice")  # 1 email
     assert started.status_code == 202
     pending_id = started.json()["pending_id"]
     assert client.post("/auth/otp/resend", json={"id": pending_id}).status_code == 200  # 2
@@ -250,11 +238,11 @@ def test_the_daily_cap_counts_sign_up_codes_and_resends_too(client, sms_outbox, 
     capped = start_signup(client, "bob")
     assert capped.status_code == 429 and error_code(capped) == "too_many_requests"
     assert client.post("/auth/otp/resend", json={"id": pending_id}).status_code == 429
-    assert len(sms_outbox) == 2  # the made-up username was never texted
+    assert len(email_outbox) == 2  # the made-up username was never emailed
 
 
-def test_daily_code_cap_warns_at_80_percent_and_logs_when_reached(client, sms_outbox, monkeypatch, caplog):
-    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 5)
+def test_daily_code_cap_warns_at_80_percent_and_logs_when_reached(client, email_outbox, monkeypatch, caplog):
+    monkeypatch.setattr(settings, "EMAIL_DAILY_CAP", 5)
     with caplog.at_level(logging.WARNING, logger="app.services.otp_service"):
         for i in range(1, 5):
             assert forgot(client, f"ghost{i}").status_code == 202

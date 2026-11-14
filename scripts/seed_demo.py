@@ -1,4 +1,4 @@
-"""Demo data for the phone app: the people, spaces, expenses, payments and cards of prototype/js/data.js seed().
+"""Demo data for the mobile app: the people, spaces, expenses, payments and cards of prototype/js/data.js seed().
 
     python scripts/seed_demo.py            create the demo data (refuses if kabir.r already exists)
     python scripts/seed_demo.py --reset    delete the demo users' rows, then create the demo data again
@@ -41,13 +41,13 @@ from app.utils.security import hash_password  # noqa: E402
 
 PASSWORD = "demo1234"
 
-USERS = [  # (username, name, phone): the prototype's u_kabir, u_swetha, u_arun, u_meera, u_rohan, u_priya
-    ("kabir.r", "Kabir Rao", "+919845012331"),
-    ("swetha.i", "Swetha Iyer", "+919880213344"),
-    ("arun.n", "Arun Nair", "+919446078812"),
-    ("meera.s", "Meera Shah", "+971501234567"),
-    ("rohan.d", "Rohan Das", "+919830045566"),
-    ("priya.m", "Priya Menon", "+919567001122"),
+USERS = [  # (username, name, default currency); the email is <username>@example.com. The prototype's u_kabir, u_swetha, u_arun, u_meera, u_rohan, u_priya
+    ("kabir.r", "Kabir Rao", "INR"),
+    ("swetha.i", "Swetha Iyer", "INR"),
+    ("arun.n", "Arun Nair", "INR"),
+    ("meera.s", "Meera Shah", "AED"),
+    ("rohan.d", "Rohan Das", "INR"),
+    ("priya.m", "Priya Menon", "INR"),
 ]
 
 # (key, name, icon, currency, owner, members in list order, created N days ago)
@@ -111,14 +111,14 @@ def seed(db: Session) -> None:
         return now - timedelta(days=days)
 
     password_hash = hash_password(PASSWORD)
-    for username, name, phone in USERS:
+    for username, name, currency in USERS:
         db.add(
             User(
                 username=username,
                 name=name,
-                phone=phone,
+                email=f"{username}@example.com",
                 password_hash=password_hash,
-                currency="AED" if phone.startswith("+971") else "INR",  # the phone's country
+                currency=currency,
             )
         )
     db.flush()
@@ -252,7 +252,7 @@ def reset(db: Session) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Create the demo users, spaces and balances for the phone app.")
+    parser = argparse.ArgumentParser(description="Create the demo users, spaces and balances for the mobile app.")
     parser.add_argument("--reset", action="store_true", help="delete the demo users' rows first, then create them again")
     args = parser.parse_args(argv)
 

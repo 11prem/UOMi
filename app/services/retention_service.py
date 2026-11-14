@@ -8,7 +8,7 @@ What goes, and when (all times are counted back from now):
   - notifications    older than NOTIFICATION_RETENTION_DAYS and not still asking a question;
   - device_tokens    phones not seen for DEVICE_TOKEN_RETENTION_DAYS (the app registers on every launch).
 
-Rows are kept for a day after they stop mattering, never less: the daily text cap counts sign-up and reset rows made today
+Rows are kept for a day after they stop mattering, never less: the daily code cap counts sign-up and reset rows made today
 (see otp_service.enforce_daily_code_cap), so clearing them sooner would let the cap be dodged.
 """
 

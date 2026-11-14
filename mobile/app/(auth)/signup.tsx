@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Controller, useForm } from 'react-hook-form';
-import { COUNTRIES, maskPhone, toE164 } from '../../src/domain/phone';
+import { useForm } from 'react-hook-form';
+import { isValidEmail, maskEmail, normalizeEmail } from '../../src/domain/email';
 import { FormInput } from '../../src/features/auth/FormInput';
-import { PhoneField, regionCountry } from '../../src/features/auth/PhoneField';
 import { Unavailable } from '../../src/features/auth/Unavailable';
 import { PASSWORD_HINT, USERNAME_RULE, password as passwordRule, signUpSchema, type SignUpInput } from '../../src/features/auth/schemas';
 import { AppError } from '../../src/services/errors';
@@ -31,17 +30,15 @@ export default function SignUp() {
 function SignUpForm() {
   const { colors, type, space } = useTheme();
   const services = useServices();
-  const initialCountry = useMemo(() => regionCountry().code, []);
   const form = useForm<SignUpInput>({
     resolver: zodResolver(signUpSchema),
     mode: 'onTouched', // checks a field when it loses focus, then as it changes; the whole form again on submit
-    defaultValues: { username: '', name: '', country: initialCountry, phone: '', password: '', confirm: '' },
+    defaultValues: { username: '', name: '', email: '', password: '', confirm: '' },
   });
   const { formState, watch } = form;
   useDiscardGuard(formState.isDirty); // Back with typed input asks "Discard changes?" (specs § 3.1)
 
-  const country = COUNTRIES.find((c) => c.code === watch('country')) ?? COUNTRIES[0];
-  const phoneE164 = toE164(watch('phone'), country.code);
+  const email = normalizeEmail(watch('email'));
   const passwordOk = passwordRule.safeParse(watch('password')).success;
 
   // ✓ Available / ✗ taken, 400 ms after the last keystroke (specs § 4.2)
@@ -61,27 +58,26 @@ function SignUpForm() {
     };
   }, [username, services]);
 
-  /** A number that already has an account, found as soon as the field loses focus rather than after the whole form. */
-  async function checkPhone() {
-    if (!(await form.trigger('phone'))) return;
-    const e164 = toE164(form.getValues('phone'), country.code);
-    if (e164 && !(await services.auth.checkPhone(e164).catch(() => true))) form.setError('phone', { message: 'Phone number already registered' });
+  /** An email that already has an account, found as soon as the field loses focus rather than after the whole form. */
+  async function checkEmail() {
+    if (!(await form.trigger('email'))) return;
+    if (!(await services.auth.checkEmail(normalizeEmail(form.getValues('email'))).catch(() => true))) form.setError('email', { message: 'Email already registered' });
   }
 
   const submit = form.handleSubmit(async (v) => {
     try {
-      const { pendingId, maskedPhone } = await services.auth.signUp({
+      const { pendingId, maskedEmail } = await services.auth.signUp({
         username: v.username,
         name: v.name,
-        phone: toE164(v.phone, country.code)!, // the schema accepted it for this country
+        email: normalizeEmail(v.email),
         password: v.password,
       });
-      form.reset(form.getValues()); // sent: the form is no longer unsaved, and Wrong number? Edit finds it as it was
-      router.push({ pathname: '/verify', params: { pendingId, maskedPhone } });
+      form.reset(form.getValues()); // sent: the form is no longer unsaved, and Wrong email? Edit finds it as it was
+      router.push({ pathname: '/verify', params: { pendingId, maskedEmail } });
     } catch (e) {
       if (!(e instanceof AppError)) return void toast('Something went wrong');
       if (e.code === 'username_taken') form.setError('username', { message: e.message }, { shouldFocus: true });
-      else if (e.code === 'phone_taken') form.setError('phone', { message: e.message }, { shouldFocus: true });
+      else if (e.code === 'email_taken' || e.code === 'invalid_email') form.setError('email', { message: e.message }, { shouldFocus: true });
       else toast(e.message);
     }
   });
@@ -103,30 +99,18 @@ function SignUpForm() {
           {...text}
         />
         <FormInput form={form} name="name" label="Name" required autoComplete="name" textContentType="name" autoCapitalize="words" />
-        <Controller
-          control={form.control}
-          name="phone"
-          render={({ field, fieldState }) => (
-            <PhoneField
-              ref={field.ref}
-              label="Phone number"
-              required
-              value={field.value}
-              country={country}
-              onCountry={(c) => {
-                form.setValue('country', c.code);
-                if (field.value) void form.trigger('phone'); // the same digits may be wrong for the new country
-              }}
-              onChangeText={field.onChange}
-              onBlur={() => {
-                field.onBlur();
-                void checkPhone();
-              }}
-              helper="People use it to find you. We’ll text a code to verify it."
-              error={fieldState.error?.message}
-              success={phoneE164 && !fieldState.error ? `We’ll text a code to ${maskPhone(phoneE164)}` : undefined}
-            />
-          )}
+        <FormInput
+          form={form}
+          name="email"
+          label="Email"
+          required
+          helper="We’ll email a code to verify it, and use it if you forget your password."
+          success={isValidEmail(email) ? `We’ll email a code to ${maskEmail(email)}` : undefined}
+          onBlur={() => void checkEmail()}
+          keyboardType="email-address"
+          autoComplete="email"
+          textContentType="emailAddress"
+          {...text}
         />
         <FormInput
           form={form}
