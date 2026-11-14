@@ -259,6 +259,14 @@ class DeleteAccountRequest(BaseModel):
     password: str = Field(max_length=128)  # not checked for strength: it is compared with the one on file
 
 
+class ExportRequest(BaseModel):
+    """Profile, Export my data: the password is asked for again, because the file holds the whole ledger and a phone number."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(max_length=128)  # not checked for strength: it is compared with the one on file
+
+
 class DeviceRemove(BaseModel):
     """Sign-out: forget this phone's push token."""
 

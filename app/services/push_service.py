@@ -129,9 +129,12 @@ def deliver_pending(db: Session, sender: PushSender, now: datetime | None = None
             .join(DeviceToken, DeviceToken.id == PushDelivery.device_token_id)
             .join(Notification, Notification.id == PushDelivery.notification_id)
             .join(User, User.username == Notification.username)
-            .where(PushDelivery.id == delivery_id)
+            # Still due, and locked for this worker: if a second worker process runs, it skips a push the first one is
+            # sending (PostgreSQL: FOR UPDATE SKIP LOCKED) and a push the first one already answered (not due again).
+            .where(PushDelivery.id == delivery_id, PushDelivery.next_attempt_at <= now)
+            .with_for_update(skip_locked=True, of=PushDelivery)
         ).first()
-        if row is None:  # gone meanwhile: signed out, device removed, card deleted
+        if row is None:  # gone meanwhile: signed out, device removed, card deleted, or another worker has it
             continue
         delivery, device, card, user = row
 

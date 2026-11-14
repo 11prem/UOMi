@@ -622,6 +622,22 @@
         "title": "ExportProfile",
         "type": "object"
       },
+      "ExportRequest": {
+        "additionalProperties": false,
+        "description": "Profile, Export my data: the password is asked for again, because the file holds the whole ledger and a phone number.",
+        "properties": {
+          "password": {
+            "maxLength": 128,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "ExportRequest",
+        "type": "object"
+      },
       "ExportSettlement": {
         "properties": {
           "amount_minor": {
@@ -4164,9 +4180,19 @@
       }
     },
     "/users/me/export": {
-      "get": {
-        "description": "Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications.",
-        "operationId": "export_me_users_me_export_get",
+      "post": {
+        "description": "Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications.\nAsks for the password again (403 `wrong_password`, counted like a failed sign-in), so a stolen sign-in cannot download it.",
+        "operationId": "export_me_users_me_export_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -4177,6 +4203,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

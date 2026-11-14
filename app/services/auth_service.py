@@ -317,7 +317,7 @@ def request_password_reset(db: Session, username: str, background_tasks: Backgro
 
     return ForgotResponse(
         reset_id=public_id,
-        masked_phone=mask_phone(user.phone) if user is not None else otp_service.fake_masked_phone(username),
+        masked_phone=mask_phone(user.phone) if user is not None else otp_service.fake_masked_phone(db, username),
         message=FORGOT_MESSAGE,
         expires_in_seconds=_code_lifetime(),
         resend_after_seconds=settings.OTP_RESEND_COOLDOWN_SECONDS,

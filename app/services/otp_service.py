@@ -20,6 +20,7 @@ import math
 import secrets
 from datetime import datetime, timedelta
 
+import phonenumbers
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.password_reset import PasswordReset
 from app.models.pending_signup import PendingSignup
+from app.models.user import User
 from app.services import sms_service
 from app.utils import security
 from app.utils.errors import api_error
@@ -95,16 +97,29 @@ def send_code_text(phone: str, code: str) -> None:
         logger.exception("Could not send the one-time code text")
 
 
-def fake_masked_phone(username: str) -> str:
+def fake_masked_phone(db: Session, username: str) -> str:
     """The masked number shown for a username that does not exist, so the reply looks like any other.
 
     It is derived from the username under the OTP key: asking again for the same name gives the same number, as it
-    would for a real account, and nobody can tell a made-up number from a real +91 one.
+    would for a real account. Its country code and length are copied from a real user's number (chosen by the same
+    key), so the mix of countries matches the real accounts. A made-up number that was always +91 would give away
+    every real account with a number from anywhere else.
     """
     digest = security.keyed_digest("made-up-phone", username)
-    digits = [str(byte % 10) for byte in digest[:10]]
-    digits[0] = str(6 + digest[10] % 4)  # an Indian mobile number starts with 6, 7, 8 or 9
-    return mask_phone(f"{settings.DEFAULT_COUNTRY_CODE}{''.join(digits)}")
+    country, length = settings.DEFAULT_COUNTRY_CODE.lstrip("+"), 10
+    live = User.deleted_at.is_(None)
+    count = db.scalar(select(func.count()).select_from(User).where(live)) or 0
+    if count:
+        pick = int.from_bytes(digest[16:20], "big") % count
+        real_phone = db.scalar(select(User.phone).where(live).order_by(User.username).offset(pick).limit(1))
+        try:
+            number = phonenumbers.parse(real_phone, None)
+            country, length = str(number.country_code), len(str(number.national_number))
+        except phonenumbers.NumberParseException:
+            pass  # keep the default shape
+    digits = [str(byte % 10) for byte in digest[:length]]
+    digits[0] = str(6 + digest[length] % 4)  # no number starts with 0 or 1 (a trunk or an emergency prefix)
+    return mask_phone(f"+{country}{''.join(digits)}")
 
 
 # --- limits -------------------------------------------------------------------------------------------

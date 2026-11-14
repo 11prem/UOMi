@@ -157,8 +157,9 @@ def delete_expense(db: Session, user: User, expense_id: int) -> None:
 def answer_share(db: Session, user: User, expense_id: int, verdict: ShareStatus) -> ExpenseDetailOut:
     """The tick (accept) or the cross (reject) on your own share.
 
-    You may change your mind: rejecting disputes the expense and tells its creator (every time you reject),
-    accepting again lifts the dispute. Giving the answer you already gave changes nothing.
+    An accepted share is final: rejecting it afterwards is refused (`already_answered`), because the balance, and any
+    payment made against it, already counts that share. A rejection can still be changed to an accept, which lifts the
+    dispute. Giving the answer you already gave changes nothing. The creator editing the expense resets every answer.
     """
     expense, space = _expense_of(db, user.username, expense_id, lock=True)
     share = db.scalar(
@@ -170,17 +171,26 @@ def answer_share(db: Session, user: User, expense_id: int, verdict: ShareStatus)
         raise forbidden("own_share", "Your own share is accepted automatically")
     if share.status == verdict:
         return _detail(db, expense, space)
+    if share.status == ShareStatus.ACCEPTED and verdict == ShareStatus.REJECTED:
+        raise _share_already_accepted()
 
     # Claimed with one conditional UPDATE: of several requests giving the same answer at the same moment, exactly one
-    # changes the share and sends the card, and the rest change nothing (as the docs promise).
+    # changes the share and sends the card, and the rest change nothing (as the docs promise). A reject also needs the
+    # share to be not accepted at this very moment, so an accept that lands first cannot be undone by a racing reject.
+    still_open = ExpenseShare.status != verdict
+    if verdict == ShareStatus.REJECTED:
+        still_open = and_(still_open, ExpenseShare.status != ShareStatus.ACCEPTED)
     claimed = db.execute(
         update(ExpenseShare)
-        .where(ExpenseShare.id == share.id, ExpenseShare.status != verdict)
+        .where(ExpenseShare.id == share.id, still_open)
         .values(status=verdict, responded_at=utcnow())
         .execution_options(synchronize_session=False)
     )
     if claimed.rowcount != 1:
         db.rollback()
+        db.refresh(share)
+        if verdict == ShareStatus.REJECTED and share.status == ShareStatus.ACCEPTED:
+            raise _share_already_accepted()
         return _detail(db, expense, space)
     db.execute(  # the question on the original card is answered
         update(Notification)
@@ -276,6 +286,10 @@ def _save_shares(db: Session, expense: Expense, space: Space, rows: list[Row]) -
                 ref_id=expense.id,
                 needs_answer=True,
             )
+
+
+def _share_already_accepted():
+    return forbidden("already_answered", "You already accepted this share, so it can’t be rejected now")
 
 
 def _clear_answers(db: Session, expense_id: int) -> None:

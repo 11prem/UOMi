@@ -10,8 +10,8 @@ from app.database import get_db
 from app.dependencies import AuthContext, get_auth_context, get_current_user
 from app.models.user import User
 from app.schemas.export import AccountExport
-from app.schemas.user import DeleteAccountRequest, DeviceIn, DeviceRemove, UserMe, UserSearchResult, UserUpdate
-from app.services import account_service, device_service, export_service, user_service
+from app.schemas.user import DeleteAccountRequest, DeviceIn, DeviceRemove, ExportRequest, UserMe, UserSearchResult, UserUpdate
+from app.services import account_service, auth_service, device_service, export_service, user_service
 from app.utils.rate_limit import HOUR, MINUTE, enforce, search_ip_limit
 from app.utils.validators import parse_full_phone
 
@@ -24,15 +24,20 @@ def read_me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-@router.get("/me/export", response_model=AccountExport)
-def export_me(response: Response, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> AccountExport:
-    """Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications."""
+@router.post("/me/export", response_model=AccountExport)
+def export_me(
+    data: ExportRequest, response: Response, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+) -> AccountExport:
+    """Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications.
+    Asks for the password again (403 `wrong_password`, counted like a failed sign-in), so a stolen sign-in cannot download it."""
     enforce(
         f"export:user:{current_user.username}",
         settings.EXPORT_MAX_PER_USER_PER_HOUR,
         HOUR,
         message="You have exported your data a lot. Please try again later.",
     )
+    auth_service.confirm_password(db, current_user, data.password)
+    db.commit()  # the wrong-password count (or its reset) is kept
     response.headers["Content-Disposition"] = f'attachment; filename="uomi-export-{current_user.username}.json"'
     return export_service.build_export(db, current_user)
 

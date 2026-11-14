@@ -342,12 +342,33 @@ def test_changing_your_mind_lifts_the_dispute(client, users, space):
     assert len(cards(client, users["alice"], "share_rejected")) == 1  # accepting adds no card
 
 
-def test_rejecting_again_after_changing_your_mind_tells_the_creator_again(client, users, space):
+def test_an_accepted_share_cannot_be_rejected_afterwards(client, users, space):
+    # Otherwise someone could accept, pay and be confirmed, then reject: the expense would drop out of every balance
+    # and the person they paid would suddenly owe them.
     expense = add_ok(client, users["alice"], space["id"])
-    for verdict in ("reject", "accept", "reject"):
-        answer(client, users["carol"], expense["id"], verdict)
+    answer(client, users["carol"], expense["id"], "reject")
+    answer(client, users["carol"], expense["id"], "accept")
 
-    assert len(cards(client, users["alice"], "share_rejected")) == 2
+    result = answer(client, users["carol"], expense["id"], "reject")
+
+    assert result.status_code == 403
+    assert result.json()["detail"]["code"] == "forbidden"
+    assert result.json()["detail"]["reason"] == "already_answered"
+    detail = client.get(f"/expenses/{expense['id']}", headers=auth(users["carol"])).json()
+    assert shares_of(detail)["carol"] == (10000, "accepted")
+    assert detail["disputed"] is False
+    assert space_page(client, users["alice"], space["id"])["balance_minor"] == 20000
+    assert len(cards(client, users["alice"], "share_rejected")) == 1  # only the first rejection told the creator
+
+
+def test_an_edit_gives_everyone_a_fresh_answer_even_after_an_accept(client, users, space):
+    expense = add_ok(client, users["alice"], space["id"])
+    answer(client, users["carol"], expense["id"], "accept")
+    assert answer(client, users["carol"], expense["id"], "reject").status_code == 403
+
+    assert client.put(f"/expenses/{expense['id']}", json=body(), headers=auth(users["alice"])).status_code == 200
+
+    assert answer(client, users["carol"], expense["id"], "reject").status_code == 200
 
 
 def test_giving_the_same_answer_again_changes_nothing(client, users, space):
