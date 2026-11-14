@@ -63,7 +63,7 @@ How it was checked:
    - PostgreSQL testing of migration 0002;
    - HTTPS (the app allows plain HTTP only for this test build);
    - pinned dependencies.
-7. Decide whether the 10-minute idle sign-out is right for a "fast at the moment of spending" app.
+7. ~~Decide whether the 10-minute idle sign-out is right~~ Decided: 30 minutes (`SESSION_IDLE_TIMEOUT_MINUTES`).
 
 ### App team
 

@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { AppError } from '../errors';
-import { createServerServices } from '../server';
+import { TRANSACTIONS_MAX_PAGES, TRANSACTIONS_PAGE, createServerServices } from '../server';
 import { defaultTokenStore, type StoredTokens, type TokenStore } from '../server/tokens';
 
 jest.mock('expo-secure-store', () => {
@@ -679,29 +679,243 @@ describe('profile and the operations the server cannot do yet', () => {
       ['auth.requestResetOtp', () => svc.auth.requestResetOtp('a')],
       ['auth.verifyResetOtp', () => svc.auth.verifyResetOtp('r', '123456')],
       ['auth.resetPassword', () => svc.auth.resetPassword('t', 'x')],
-      ['spaces.update', () => svc.spaces.update('1', { name: 'x' })],
-      ['spaces.addMembers', () => svc.spaces.addMembers('1', ['a'])],
-      ['spaces.removeMember', () => svc.spaces.removeMember('1', 'a')],
-      ['spaces.leave', () => svc.spaces.leave('1')],
-      ['spaces.remove', () => svc.spaces.remove('1')],
       ['expenses.get', () => svc.expenses.get('1')],
       ['expenses.create', () => svc.expenses.create(expenseInput)],
       ['expenses.update', () => svc.expenses.update('1', expenseInput)],
       ['expenses.remove', () => svc.expenses.remove('1')],
       ['expenses.acceptShare', () => svc.expenses.acceptShare('1')],
       ['expenses.rejectShare', () => svc.expenses.rejectShare('1')],
-      ['settlements.get', () => svc.settlements.get('1')],
-      ['settlements.payees', () => svc.settlements.payees('1')],
-      ['settlements.create', () => svc.settlements.create({ spaceId: '1', toUserId: 'a', amountMinor: 100 })],
-      ['settlements.confirm', () => svc.settlements.confirm('1')],
-      ['settlements.reject', () => svc.settlements.reject('1')],
-      ['settlements.cancel', () => svc.settlements.cancel('1')],
-      ['transactions.list', () => svc.transactions.list({ kind: 'all' })],
       ['profile.update', () => svc.profile.update({ name: 'x' })],
       ['profile.setPreferences', () => svc.profile.setPreferences({ defaultCurrency: 'INR', theme: 'dark', notificationsOn: false })],
     ];
     for (const [, run] of all) await rejects(run(), 'not_on_server');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('settle up over HTTP', () => {
+  const HEADER = { id: 2, name: 'Goa Trip', icon: 'trip', currency: 'INR', owner_username: 'arun.n', created_at: '2026-10-01T06:00:00.123456Z' };
+  const settlement = (extra: object = {}) => ({
+    id: 9,
+    space: HEADER,
+    from_user: KABIR,
+    to_user: ARUN,
+    amount_minor: 4000,
+    status: 'pending',
+    created_at: '2026-11-05T09:00:00Z',
+    answered_at: null,
+    ...extra,
+  });
+
+  it('payees maps the people the viewer owes, with what is owed and the most that can be recorded', async () => {
+    const { svc, calls } = make(() => ({ body: [{ user: ARUN, owed_minor: 300000, max_minor: 250000 }] }));
+    const [payee] = await svc.settlements.payees('2');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /spaces/2/payees']);
+    expect(payee).toMatchObject({ user: { id: 'arun.n', username: 'arun.n', name: 'Arun Nair' }, owedMinor: 300000, maxMinor: 250000 });
+  });
+
+  it('create posts to_username and amount_minor and returns the pending payment', async () => {
+    const { svc, calls } = make(() => ({ status: 201, body: settlement() }));
+    const created = await svc.settlements.create({ spaceId: '2', toUserId: 'arun.n', amountMinor: 4000 });
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/spaces/2/settlements', body: { to_username: 'arun.n', amount_minor: 4000 } });
+    expect(created).toEqual({
+      id: '9',
+      spaceId: '2',
+      fromUserId: 'kabir.r',
+      toUserId: 'arun.n',
+      amountMinor: 4000,
+      date: Date.parse('2026-11-05T09:00:00Z'),
+      status: 'pending',
+      answeredAt: null,
+    });
+  });
+
+  it('get maps the payment screen: the payment, its space, and both people', async () => {
+    const { svc, calls } = make(() => ({ body: settlement({ status: 'confirmed', answered_at: '2026-11-06T10:00:00Z' }) }));
+    const d = await svc.settlements.get('9');
+    expect(calls[0]).toMatchObject({ method: 'GET', path: '/settlements/9' });
+    expect(d.settlement).toMatchObject({ id: '9', status: 'confirmed', answeredAt: Date.parse('2026-11-06T10:00:00Z') });
+    expect(d.space).toMatchObject({ id: '2', name: 'Goa Trip', currency: 'INR', ownerId: 'arun.n' });
+    expect([d.from.id, d.to.id]).toEqual(['kabir.r', 'arun.n']);
+  });
+
+  it('confirm, reject and cancel each post to their own path', async () => {
+    const { svc, calls } = make(() => ({ body: settlement() }));
+    await svc.settlements.confirm('9');
+    await svc.settlements.reject('9');
+    await svc.settlements.cancel('9');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /settlements/9/confirm', 'POST /settlements/9/reject', 'POST /settlements/9/cancel']);
+  });
+
+  it('keeps the server’s own words for a refusal, and maps the not-found codes', async () => {
+    const owes = make(() => fail(403, 'forbidden', 'You don’t owe Arun anything in this space', { reason: 'owes_nothing' }));
+    const refused = await rejects(owes.svc.settlements.create({ spaceId: '2', toUserId: 'arun.n', amountMinor: 100 }), 'forbidden');
+    expect(refused.message).toBe('You don’t owe Arun anything in this space');
+    expect(refused.extra).toEqual({ reason: 'owes_nothing' });
+
+    const gone = make(() => fail(404, 'settlement_not_found', 'Payment not found.'));
+    await rejects(gone.svc.settlements.get('9'), 'not_found');
+    const nobody = make(() => fail(404, 'person_not_found', 'Person not found.'));
+    await rejects(nobody.svc.settlements.create({ spaceId: '2', toUserId: 'ghost', amountMinor: 100 }), 'not_found');
+  });
+});
+
+describe('transactions over HTTP', () => {
+  const HOME = { space_id: 2, space_name: 'Goa Trip', currency: 'INR' };
+  const txExpense = (id: number, day: string, extra: object = {}) => ({
+    ...expense(id, `Bill ${id}`, 30000, ARUN, day, 10000),
+    kind: 'expense',
+    ...HOME,
+    ...extra,
+  });
+  const txPayment = (id: number, at: string, extra: object = {}) => ({
+    kind: 'payment',
+    id,
+    from_user: KABIR,
+    to_user: ARUN,
+    amount_minor: 4000,
+    status: 'pending',
+    created_at: at,
+    answered_at: null,
+    ...HOME,
+    ...extra,
+  });
+  type Page = { items: object[]; next_before: string | null };
+  /** Answers /users/me, and /transactions from `pages`, keyed by the `before` marker it was asked with ('' for the first page). */
+  const serverWith = (pages: Record<string, Page>) =>
+    make((c) => {
+      if (c.path === '/users/me') return { body: ME };
+      const before = new URLSearchParams(c.path.split('?')[1]).get('before') ?? '';
+      return { body: pages[before] };
+    });
+
+  it('asks for the list a page at a time and maps each row as the Space page does', async () => {
+    const { svc, calls } = serverWith({ '': { items: [txPayment(9, '2026-11-05T09:00:00Z'), txExpense(7, '2026-11-03')], next_before: null } });
+    const rows = await svc.transactions.list({ kind: 'all' });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /users/me', `GET /transactions?kind=all&limit=${TRANSACTIONS_PAGE}`]);
+    expect(rows).toEqual([
+      {
+        kind: 'payment',
+        id: '9',
+        date: Date.parse('2026-11-05T09:00:00Z'),
+        fromId: 'kabir.r',
+        fromName: 'Kabir Rao',
+        toId: 'arun.n',
+        toName: 'Arun Nair',
+        amountMinor: 4000,
+        status: 'pending',
+        spaceId: '2',
+        spaceName: 'Goa Trip',
+        currency: 'INR',
+      },
+      {
+        kind: 'expense',
+        id: '7',
+        description: 'Bill 7',
+        date: new Date(2026, 10, 3).getTime(), // that day on this device
+        amountMinor: 30000,
+        paidById: 'arun.n',
+        paidByName: 'Arun Nair',
+        myPartMinor: -10000, // Arun paid and the viewer's share is 100: they owe it
+        myResponse: 'accepted',
+        disputed: false,
+        spaceId: '2',
+        spaceName: 'Goa Trip',
+        currency: 'INR',
+      },
+    ]);
+  });
+
+  it('follows next_before until the server says there is no more', async () => {
+    const { svc, calls } = serverWith({
+      '': { items: [txExpense(7, '2026-11-09')], next_before: '1.0.5' },
+      '1.0.5': { items: [txExpense(6, '2026-11-08')], next_before: '2.1.6' },
+      '2.1.6': { items: [txExpense(5, '2026-11-07')], next_before: null },
+    });
+    const rows = await svc.transactions.list({ kind: 'all' });
+    expect(rows.map((r) => r.id)).toEqual(['7', '6', '5']);
+    expect(calls.slice(1).map((c) => c.path)).toEqual([
+      `/transactions?kind=all&limit=${TRANSACTIONS_PAGE}`,
+      `/transactions?kind=all&limit=${TRANSACTIONS_PAGE}&before=1.0.5`,
+      `/transactions?kind=all&limit=${TRANSACTIONS_PAGE}&before=2.1.6`,
+    ]);
+  });
+
+  it('passes the kind and the space to the server, and encodes the space', async () => {
+    const { svc, calls } = serverWith({ '': { items: [], next_before: null } });
+    expect(await svc.transactions.list({ kind: 'payments', spaceId: 'a b' })).toEqual([]);
+    expect(calls[1].path).toBe(`/transactions?kind=payments&limit=${TRANSACTIONS_PAGE}&space_id=a%20b`);
+  });
+
+  it('sorts newest first by the date the app shows, keeping the server’s order for equal dates', async () => {
+    const same = '2026-11-05T09:00:00Z';
+    const { svc } = serverWith({
+      '': { items: [txPayment(1, '2026-11-01T09:00:00Z'), txPayment(3, same), txPayment(2, same), txPayment(4, '2026-11-09T09:00:00Z')], next_before: null },
+    });
+    expect((await svc.transactions.list({ kind: 'payments' })).map((r) => r.id)).toEqual(['4', '3', '2', '1']);
+  });
+
+  it('stops after the most pages it is willing to fetch', async () => {
+    const { svc, calls } = make((c) => ({ body: c.path === '/users/me' ? ME : { items: [txExpense(1, '2026-11-03')], next_before: '1.0.1' } }));
+    const rows = await svc.transactions.list({ kind: 'all' });
+    expect(rows).toHaveLength(TRANSACTIONS_MAX_PAGES);
+    expect(calls.filter((c) => c.path.startsWith('/transactions'))).toHaveLength(TRANSACTIONS_MAX_PAGES);
+  });
+
+  it('an older server without the endpoint is "not on this server"; a missing space is only not found', async () => {
+    const older = make((c) => (c.path === '/users/me' ? { body: ME } : fail(404, 'not_found', 'Not Found')));
+    await rejects(older.svc.transactions.list({ kind: 'all' }), 'not_on_server');
+    const gone = make((c) => (c.path === '/users/me' ? { body: ME } : fail(404, 'space_not_found', 'Space not found.')));
+    await rejects(gone.svc.transactions.list({ kind: 'all', spaceId: '9' }), 'not_found');
+  });
+
+  it('any other failure comes through as it is', async () => {
+    const down = make((c) => (c.path === '/users/me' ? { body: ME } : fail(422, 'validation_error', 'Some fields are invalid.', { fields: [{ field: 'before', message: 'no' }] })));
+    await rejects(down.svc.transactions.list({ kind: 'all' }), 'validation_error');
+  });
+});
+
+describe('space settings over HTTP', () => {
+  /** Answers /users/me, and every other request with `reply`. */
+  const answering = (reply: { status?: number; body?: unknown }) => make((c) => (c.path === '/users/me' ? { body: ME } : reply));
+
+  it('update sends only the fields that were given and returns the space', async () => {
+    const { svc, calls } = answering({ body: { ...GOA, name: 'Goa 2' } });
+    const space = await svc.spaces.update('2', { name: 'Goa 2' });
+    expect(calls[1]).toMatchObject({ method: 'PATCH', path: '/spaces/2', body: { name: 'Goa 2' } });
+    expect(Object.keys(calls[1].body)).toEqual(['name']); // the icon and currency were not given, so they are not sent
+    expect(space).toMatchObject({ id: '2', name: 'Goa 2', currency: 'INR', ownerId: 'arun.n' });
+  });
+
+  it('addMembers posts the usernames', async () => {
+    const { svc, calls } = answering({ body: GOA });
+    await expect(svc.spaces.addMembers('2', ['swetha.i', 'priya.m'])).resolves.toBeUndefined();
+    expect(calls[1]).toMatchObject({ method: 'POST', path: '/spaces/2/members', body: { usernames: ['swetha.i', 'priya.m'] } });
+  });
+
+  it('removeMember, leave and remove each call their own endpoint, and the empty replies are fine', async () => {
+    const { svc, calls } = answering({ status: 204 });
+    await expect(svc.spaces.removeMember('2', 'a b')).resolves.toBeUndefined();
+    await expect(svc.spaces.leave('2')).resolves.toBeUndefined();
+    await expect(svc.spaces.remove('2')).resolves.toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['DELETE /spaces/2/members/a%20b', 'POST /spaces/2/leave', 'DELETE /spaces/2']);
+  });
+
+  it('keeps the server’s own words when a rule refuses, and maps the not-found codes', async () => {
+    const owing = answering(fail(403, 'forbidden', 'Settle up first', { reason: 'not_settled' }));
+    const refused = await rejects(owing.svc.spaces.leave('2'), 'forbidden');
+    expect(refused.message).toBe('Settle up first');
+    expect(refused.extra).toEqual({ reason: 'not_settled' });
+
+    const locked = answering(fail(403, 'forbidden', 'Can’t change after expenses are added', { reason: 'has_expenses' }));
+    expect((await rejects(locked.svc.spaces.update('2', { currency: 'USD' }), 'forbidden')).message).toBe('Can’t change after expenses are added');
+
+    const nobody = answering(fail(404, 'member_not_found', 'That person is not in this space.'));
+    await rejects(nobody.svc.spaces.removeMember('2', 'ghost'), 'not_found');
+    const gone = answering(fail(404, 'space_not_found', 'Space not found.'));
+    await rejects(gone.svc.spaces.remove('9'), 'not_found');
+    const unknown = answering(fail(422, 'unknown_usernames', 'Some of these usernames do not exist.', { usernames: ['ghost'] }));
+    expect((await rejects(unknown.svc.spaces.addMembers('2', ['ghost']), 'validation_error')).extra).toEqual({ usernames: ['ghost'] });
   });
 });
 

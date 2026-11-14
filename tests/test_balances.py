@@ -11,7 +11,7 @@ from app.models.group import Space
 from app.models.payment import Settlement, SettlementStatus
 from app.models.user import User
 from app.services import balance_service
-from tests.helpers import add_expense, add_settlement, auth, create_space, db_exec, error_code, register
+from tests.helpers import add_expense, add_settlement, auth, create_space, db_exec, error_code, last_code, register
 
 ACCEPTED = ShareStatus.ACCEPTED
 PENDING = ShareStatus.PENDING
@@ -122,7 +122,7 @@ def test_counterparty_side_of_net(client, users):
 
 def test_counterparty_name_is_the_full_name(client):
     alice = register(client, "alice")
-    response = client.post(
+    started = client.post(
         "/auth/register",
         json={
             "username": "swetha",
@@ -131,6 +131,11 @@ def test_counterparty_name_is_the_full_name(client):
             "password": "password123",
             "confirm_password": "password123",
         },
+    )
+    assert started.status_code == 202, started.text
+    response = client.post(
+        "/auth/register/verify",
+        json={"pending_id": started.json()["pending_id"], "code": last_code(EXTRA_PHONES["swetha"])},
     )
     assert response.status_code == 201, response.text
     space = create_space(client, alice, "Flat", ["swetha"])
@@ -305,7 +310,7 @@ def test_create_space_currency(client, users):
     headers = auth(users["alice"])
 
     def create(**extra):
-        return client.post("/spaces", json={"name": "Dubai", "icon": "trip", "usernames": [], **extra}, headers=headers)
+        return client.post("/spaces", json={"name": "Dubai", "icon": "trip", "usernames": ["bob"], **extra}, headers=headers)
 
     created = create(currency="USD")
     assert created.status_code == 201, created.text
@@ -341,6 +346,7 @@ def test_every_supported_currency_is_accepted(client, users):
 
 
 def test_space_detail_shape(client, users):
+    day_before = utcnow().date().isoformat()  # the expense is dated 'today': around midnight UTC that can be either day
     space = create_space(client, users["alice"], "Flat", ["bob"])
     add_expense(space["id"], "alice", "Dinner", {"alice": ("100", ACCEPTED), "bob": ("100", ACCEPTED)})
     add_settlement(space["id"], "bob", "alice", "40", SettlementStatus.CONFIRMED)
@@ -387,7 +393,7 @@ def test_space_detail_shape(client, users):
     }
     assert (expense["description"], expense["amount_minor"], expense["split_type"]) == ("Dinner", 20000, "equal")
     assert (expense["paid_by"], expense["created_by"]) == (alice, alice)
-    assert expense["date"] == utcnow().date().isoformat()
+    assert expense["date"] in {day_before, utcnow().date().isoformat()}
     assert expense["created_at"].endswith("Z") and expense["updated_at"].endswith("Z")
     assert (expense["my_share_minor"], expense["my_share_status"], expense["disputed"]) == (10000, "accepted", False)
 

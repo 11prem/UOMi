@@ -157,5 +157,8 @@ login_limit = limit_by_ip(
     message="Too many sign-in attempts from this network. Please try again later.",
 )
 forgot_limit = limit_by_ip("forgot", lambda: settings.FORGOT_MAX_PER_IP_PER_HOUR, HOUR)
+resend_limit = limit_by_ip("resend", lambda: settings.RESEND_MAX_PER_IP_PER_HOUR, HOUR)
 verify_otp_limit = limit_by_ip("verify-otp", lambda: settings.VERIFY_OTP_MAX_PER_IP_PER_HOUR, HOUR)
+username_check_limit = limit_by_ip("username-check", lambda: settings.USERNAME_CHECK_MAX_PER_IP_PER_MINUTE, MINUTE)
+phone_check_limit = limit_by_ip("phone-check", lambda: settings.PHONE_CHECK_MAX_PER_IP_PER_HOUR, HOUR)
 search_ip_limit = limit_by_ip("search", lambda: settings.SEARCH_MAX_PER_IP_PER_MINUTE, MINUTE)

@@ -17,7 +17,7 @@ Rules that only apply in server mode:
 
 - **Endpoints that exist work:** sign in and out, Home, Create Space, people search, the Space page and Notifications use the real backend.
 - **Endpoints that don't exist yet show a panel:** Create Account, Forgot password, expenses, settle up, transactions, profile editing and space settings show **"Not available on this server yet"**. See `../BACKEND-DEVIATIONS.md`.
-- **Idle sign-out:** the app returns to Sign In after about 9.5 idle minutes: the server's 10-minute limit minus a 30-second margin. Demo mode stays signed in.
+- **Idle sign-out:** the app returns to Sign In after about 29.5 idle minutes: the server's limit (30 minutes) minus a 30-second margin. It follows whatever the server says (`idle_timeout_seconds`). Demo mode stays signed in.
 - **Switching modes signs you out** and clears cached data, so the two modes never mix.
 
 ### Demo accounts

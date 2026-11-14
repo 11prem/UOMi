@@ -1,0 +1,4250 @@
+{
+  "components": {
+    "schemas": {
+      "AccountExport": {
+        "properties": {
+          "expenses": {
+            "items": {
+              "$ref": "#/components/schemas/ExportExpense"
+            },
+            "title": "Expenses",
+            "type": "array"
+          },
+          "exported_at": {
+            "format": "date-time",
+            "title": "Exported At",
+            "type": "string"
+          },
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationOut"
+            },
+            "title": "Notifications",
+            "type": "array"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ExportProfile"
+          },
+          "settlements": {
+            "items": {
+              "$ref": "#/components/schemas/ExportSettlement"
+            },
+            "title": "Settlements",
+            "type": "array"
+          },
+          "spaces": {
+            "items": {
+              "$ref": "#/components/schemas/ExportSpace"
+            },
+            "title": "Spaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "exported_at",
+          "profile",
+          "spaces",
+          "expenses",
+          "settlements",
+          "notifications"
+        ],
+        "title": "AccountExport",
+        "type": "object"
+      },
+      "AddMembersRequest": {
+        "description": "Add people (specs § 10): by username, any member may. They are members at once, with no accept step.",
+        "properties": {
+          "usernames": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 49,
+            "minItems": 1,
+            "title": "Usernames",
+            "type": "array"
+          }
+        },
+        "required": [
+          "usernames"
+        ],
+        "title": "AddMembersRequest",
+        "type": "object"
+      },
+      "AvailabilityOut": {
+        "description": "The live checks on Create Account: `available` is true when nobody has it yet.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "AvailabilityOut",
+        "type": "object"
+      },
+      "DeleteAccountRequest": {
+        "additionalProperties": false,
+        "description": "Profile, Delete my account: the password is asked for again, because this cannot be undone.",
+        "properties": {
+          "password": {
+            "maxLength": 128,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "DeleteAccountRequest",
+        "type": "object"
+      },
+      "DeviceIn": {
+        "additionalProperties": false,
+        "description": "Register this phone's push token (the app does it on every launch).",
+        "properties": {
+          "platform": {
+            "enum": [
+              "android",
+              "ios",
+              "web"
+            ],
+            "title": "Platform",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "platform"
+        ],
+        "title": "DeviceIn",
+        "type": "object"
+      },
+      "DeviceRemove": {
+        "additionalProperties": false,
+        "description": "Sign-out: forget this phone's push token.",
+        "properties": {
+          "token": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "DeviceRemove",
+        "type": "object"
+      },
+      "ExpenseDetailOut": {
+        "description": "The expense screen: who paid, the split, and each person's answer.",
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "disputed": {
+            "title": "Disputed",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/MemberOut"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "paid_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "shares": {
+            "items": {
+              "$ref": "#/components/schemas/ShareOut"
+            },
+            "title": "Shares",
+            "type": "array"
+          },
+          "space": {
+            "$ref": "#/components/schemas/SpaceHeader"
+          },
+          "split_type": {
+            "$ref": "#/components/schemas/SplitType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "amount_minor",
+          "split_type",
+          "paid_by",
+          "created_by",
+          "date",
+          "created_at",
+          "updated_at",
+          "disputed",
+          "space",
+          "members",
+          "shares"
+        ],
+        "title": "ExpenseDetailOut",
+        "type": "object"
+      },
+      "ExpenseListOut": {
+        "description": "One page of a space's expenses, newest first. Pass `next_before` as `before` to get the next page.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExpenseRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "ExpenseListOut",
+        "type": "object"
+      },
+      "ExpenseRow": {
+        "description": "One expense card on the Group page.",
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "disputed": {
+            "title": "Disputed",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "my_share_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "My Share Minor"
+          },
+          "my_share_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShareStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "split_type": {
+            "$ref": "#/components/schemas/SplitType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "amount_minor",
+          "split_type",
+          "paid_by",
+          "created_by",
+          "date",
+          "created_at",
+          "updated_at",
+          "my_share_minor",
+          "my_share_status",
+          "disputed"
+        ],
+        "title": "ExpenseRow",
+        "type": "object"
+      },
+      "ExpenseTransaction": {
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "disputed": {
+            "title": "Disputed",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "expense",
+            "default": "expense",
+            "title": "Kind",
+            "type": "string"
+          },
+          "my_share_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "My Share Minor"
+          },
+          "my_share_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShareStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "space_id": {
+            "title": "Space Id",
+            "type": "integer"
+          },
+          "space_name": {
+            "title": "Space Name",
+            "type": "string"
+          },
+          "split_type": {
+            "$ref": "#/components/schemas/SplitType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "space_name",
+          "currency",
+          "id",
+          "description",
+          "amount_minor",
+          "split_type",
+          "paid_by",
+          "created_by",
+          "date",
+          "created_at",
+          "updated_at",
+          "my_share_minor",
+          "my_share_status",
+          "disputed"
+        ],
+        "title": "ExpenseTransaction",
+        "type": "object"
+      },
+      "ExpenseWrite": {
+        "description": "Add expense, and the edit screen (which sends the whole expense again).",
+        "properties": {
+          "amount_minor": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 999999999.0,
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "paid_by": {
+            "title": "Paid By",
+            "type": "string"
+          },
+          "shares": {
+            "items": {
+              "$ref": "#/components/schemas/ShareIn"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Shares",
+            "type": "array"
+          },
+          "split_type": {
+            "$ref": "#/components/schemas/SplitType"
+          }
+        },
+        "required": [
+          "description",
+          "amount_minor",
+          "paid_by",
+          "split_type",
+          "shares",
+          "date"
+        ],
+        "title": "ExpenseWrite",
+        "type": "object"
+      },
+      "ExportExpense": {
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "disputed": {
+            "title": "Disputed",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "paid_by": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "shares": {
+            "items": {
+              "$ref": "#/components/schemas/ShareOut"
+            },
+            "title": "Shares",
+            "type": "array"
+          },
+          "space_id": {
+            "title": "Space Id",
+            "type": "integer"
+          },
+          "split_type": {
+            "$ref": "#/components/schemas/SplitType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "description",
+          "amount_minor",
+          "split_type",
+          "paid_by",
+          "created_by",
+          "date",
+          "created_at",
+          "updated_at",
+          "disputed",
+          "shares"
+        ],
+        "title": "ExportExpense",
+        "type": "object"
+      },
+      "ExportMember": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "title": "Joined At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "position",
+          "joined_at"
+        ],
+        "title": "ExportMember",
+        "type": "object"
+      },
+      "ExportProfile": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notifications_on": {
+            "title": "Notifications On",
+            "type": "boolean"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "phone",
+          "currency",
+          "notifications_on",
+          "created_at"
+        ],
+        "title": "ExportProfile",
+        "type": "object"
+      },
+      "ExportSettlement": {
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "from_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "space_id": {
+            "title": "Space Id",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SettlementStatus"
+          },
+          "to_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "from_user",
+          "to_user",
+          "amount_minor",
+          "status",
+          "created_at",
+          "answered_at"
+        ],
+        "title": "ExportSettlement",
+        "type": "object"
+      },
+      "ExportSpace": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/ExportMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_username": {
+            "title": "Owner Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "icon",
+          "currency",
+          "owner_username",
+          "created_at",
+          "members"
+        ],
+        "title": "ExportSpace",
+        "type": "object"
+      },
+      "ForgotRequest": {
+        "description": "Forgot Password, step a: the username. Its phone number gets the code.",
+        "properties": {
+          "username": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "ForgotRequest",
+        "type": "object"
+      },
+      "ForgotResponse": {
+        "description": "Always the same shape, whether or not the username exists (so it cannot be used to find out who has one).",
+        "properties": {
+          "expires_in_seconds": {
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "masked_phone": {
+            "title": "Masked Phone",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "resend_after_seconds": {
+            "title": "Resend After Seconds",
+            "type": "integer"
+          },
+          "reset_id": {
+            "title": "Reset Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reset_id",
+          "masked_phone",
+          "message",
+          "expires_in_seconds",
+          "resend_after_seconds"
+        ],
+        "title": "ForgotResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "description": "Sign In screen: username + password.",
+        "properties": {
+          "password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "MarkAllReadResponse": {
+        "properties": {
+          "updated_count": {
+            "title": "Updated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated_count"
+        ],
+        "title": "MarkAllReadResponse",
+        "type": "object"
+      },
+      "MemberOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "position"
+        ],
+        "title": "MemberOut",
+        "type": "object"
+      },
+      "NotificationList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          },
+          "unread_count": {
+            "title": "Unread Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "next_before",
+          "unread_count"
+        ],
+        "title": "NotificationList",
+        "type": "object"
+      },
+      "NotificationOut": {
+        "description": "A card on the Home page and the Notifications page.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "needs_answer": {
+            "title": "Needs Answer",
+            "type": "boolean"
+          },
+          "read": {
+            "title": "Read",
+            "type": "boolean"
+          },
+          "ref_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref Id"
+          },
+          "space_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Id"
+          },
+          "space_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Name"
+          },
+          "type": {
+            "$ref": "#/components/schemas/NotificationType"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "message",
+          "space_id",
+          "space_name",
+          "ref_id",
+          "needs_answer",
+          "read",
+          "created_at"
+        ],
+        "title": "NotificationOut",
+        "type": "object"
+      },
+      "NotificationType": {
+        "enum": [
+          "expense_share",
+          "share_rejected",
+          "payment_to_confirm",
+          "payment_answered",
+          "space_added",
+          "space_deleted",
+          "reminder"
+        ],
+        "title": "NotificationType",
+        "type": "string"
+      },
+      "NotificationUpdate": {
+        "properties": {
+          "read": {
+            "title": "Read",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "read"
+        ],
+        "title": "NotificationUpdate",
+        "type": "object"
+      },
+      "OverallLine": {
+        "description": "The Home page's overall balance in one currency. Currencies are never added together.",
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "net_minor": {
+            "title": "Net Minor",
+            "type": "integer"
+          },
+          "owe_minor": {
+            "title": "Owe Minor",
+            "type": "integer"
+          },
+          "owed_minor": {
+            "title": "Owed Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "currency",
+          "net_minor",
+          "owe_minor",
+          "owed_minor"
+        ],
+        "title": "OverallLine",
+        "type": "object"
+      },
+      "PairOut": {
+        "description": "One line of \"who owes whom\".",
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "creditor": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "debtor": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "debtor",
+          "creditor",
+          "amount_minor"
+        ],
+        "title": "PairOut",
+        "type": "object"
+      },
+      "PayeeOut": {
+        "description": "Someone the viewer owes in a space.",
+        "properties": {
+          "max_minor": {
+            "title": "Max Minor",
+            "type": "integer"
+          },
+          "owed_minor": {
+            "title": "Owed Minor",
+            "type": "integer"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "user",
+          "owed_minor",
+          "max_minor"
+        ],
+        "title": "PayeeOut",
+        "type": "object"
+      },
+      "PaymentTransaction": {
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "from_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "payment",
+            "default": "payment",
+            "title": "Kind",
+            "type": "string"
+          },
+          "space_id": {
+            "title": "Space Id",
+            "type": "integer"
+          },
+          "space_name": {
+            "title": "Space Name",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SettlementStatus"
+          },
+          "to_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "space_id",
+          "space_name",
+          "currency",
+          "id",
+          "from_user",
+          "to_user",
+          "amount_minor",
+          "status",
+          "created_at",
+          "answered_at"
+        ],
+        "title": "PaymentTransaction",
+        "type": "object"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest",
+        "type": "object"
+      },
+      "RegisterRequest": {
+        "description": "Create Account screen (specs § 4.2): username (unique), name, phone, password, confirm.\n\nSending it starts the sign-up and texts a code. The account exists only after the code is accepted (§ 4.3).",
+        "properties": {
+          "confirm_password": {
+            "maxLength": 128,
+            "title": "Confirm Password",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 128,
+            "title": "Password",
+            "type": "string"
+          },
+          "phone": {
+            "maxLength": 30,
+            "title": "Phone",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 50,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "phone",
+          "password",
+          "confirm_password"
+        ],
+        "title": "RegisterRequest",
+        "type": "object"
+      },
+      "ResendOut": {
+        "properties": {
+          "expires_in_seconds": {
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "resend_after_seconds": {
+            "title": "Resend After Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expires_in_seconds",
+          "resend_after_seconds"
+        ],
+        "title": "ResendOut",
+        "type": "object"
+      },
+      "ResendRequest": {
+        "description": "\"Resend code\" on the code screen: a `pending_id` (sign-up) or a `reset_id` (forgot password).",
+        "properties": {
+          "id": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ResendRequest",
+        "type": "object"
+      },
+      "ResetOut": {
+        "description": "The password is changed. `username` fills the Sign In screen, which comes next (specs § 4.5).",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "username"
+        ],
+        "title": "ResetOut",
+        "type": "object"
+      },
+      "ResetRequest": {
+        "description": "Set new password screen: new + confirm.",
+        "properties": {
+          "confirm_password": {
+            "maxLength": 128,
+            "title": "Confirm Password",
+            "type": "string"
+          },
+          "new_password": {
+            "maxLength": 128,
+            "title": "New Password",
+            "type": "string"
+          },
+          "reset_token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Reset Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reset_token",
+          "new_password",
+          "confirm_password"
+        ],
+        "title": "ResetRequest",
+        "type": "object"
+      },
+      "SettlementCreate": {
+        "description": "Record a payment: who it went to and how much.",
+        "properties": {
+          "amount_minor": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 999999999.0,
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "to_username": {
+            "title": "To Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to_username",
+          "amount_minor"
+        ],
+        "title": "SettlementCreate",
+        "type": "object"
+      },
+      "SettlementDetailOut": {
+        "description": "The payment screen.",
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "from_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "space": {
+            "$ref": "#/components/schemas/SpaceHeader"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SettlementStatus"
+          },
+          "to_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "id",
+          "space",
+          "from_user",
+          "to_user",
+          "amount_minor",
+          "status",
+          "created_at",
+          "answered_at"
+        ],
+        "title": "SettlementDetailOut",
+        "type": "object"
+      },
+      "SettlementRow": {
+        "description": "One payment between two people.",
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "from_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SettlementStatus"
+          },
+          "to_user": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "id",
+          "from_user",
+          "to_user",
+          "amount_minor",
+          "status",
+          "created_at",
+          "answered_at"
+        ],
+        "title": "SettlementRow",
+        "type": "object"
+      },
+      "SettlementStatus": {
+        "enum": [
+          "pending",
+          "confirmed",
+          "rejected",
+          "cancelled"
+        ],
+        "title": "SettlementStatus",
+        "type": "string"
+      },
+      "ShareIn": {
+        "description": "One person in the split and what was typed for them (nothing for an equal split).",
+        "properties": {
+          "input": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "ShareIn",
+        "type": "object"
+      },
+      "ShareOut": {
+        "description": "One person's share of an expense and their answer to it.",
+        "properties": {
+          "amount_minor": {
+            "title": "Amount Minor",
+            "type": "integer"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "responded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Responded At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ShareStatus"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary"
+          }
+        },
+        "required": [
+          "user",
+          "amount_minor",
+          "status",
+          "responded_at",
+          "input"
+        ],
+        "title": "ShareOut",
+        "type": "object"
+      },
+      "ShareStatus": {
+        "enum": [
+          "pending",
+          "accepted",
+          "rejected"
+        ],
+        "title": "ShareStatus",
+        "type": "string"
+      },
+      "SignupStarted": {
+        "description": "The sign-up is waiting for the code that was just texted. No account exists yet.",
+        "properties": {
+          "expires_in_seconds": {
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "masked_phone": {
+            "title": "Masked Phone",
+            "type": "string"
+          },
+          "pending_id": {
+            "title": "Pending Id",
+            "type": "string"
+          },
+          "resend_after_seconds": {
+            "title": "Resend After Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending_id",
+          "masked_phone",
+          "expires_in_seconds",
+          "resend_after_seconds"
+        ],
+        "title": "SignupStarted",
+        "type": "object"
+      },
+      "SpaceCard": {
+        "description": "One card in the Home page's list of spaces.",
+        "properties": {
+          "balance_minor": {
+            "title": "Balance Minor",
+            "type": "integer"
+          },
+          "counterparty_count": {
+            "title": "Counterparty Count",
+            "type": "integer"
+          },
+          "counterparty_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counterparty Name"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_activity_at": {
+            "format": "date-time",
+            "title": "Last Activity At",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open_balances": {
+            "title": "Open Balances",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "icon",
+          "currency",
+          "member_count",
+          "balance_minor",
+          "open_balances",
+          "counterparty_name",
+          "counterparty_count",
+          "last_activity_at"
+        ],
+        "title": "SpaceCard",
+        "type": "object"
+      },
+      "SpaceCreate": {
+        "description": "Add People page, tick to create: the name + icon from the pop-up and the numbered members list.",
+        "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "usernames": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 49,
+            "title": "Usernames",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "icon"
+        ],
+        "title": "SpaceCreate",
+        "type": "object"
+      },
+      "SpaceDetailOut": {
+        "description": "Group page: header, the viewer's balance, members, expenses, payments and who owes whom.",
+        "properties": {
+          "balance_minor": {
+            "title": "Balance Minor",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "expenses": {
+            "items": {
+              "$ref": "#/components/schemas/ExpenseRow"
+            },
+            "title": "Expenses",
+            "type": "array"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/MemberOut"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_username": {
+            "title": "Owner Username",
+            "type": "string"
+          },
+          "pairwise": {
+            "items": {
+              "$ref": "#/components/schemas/PairOut"
+            },
+            "title": "Pairwise",
+            "type": "array"
+          },
+          "settlements": {
+            "items": {
+              "$ref": "#/components/schemas/SettlementRow"
+            },
+            "title": "Settlements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "icon",
+          "currency",
+          "owner_username",
+          "created_at",
+          "balance_minor",
+          "members",
+          "expenses",
+          "settlements",
+          "pairwise"
+        ],
+        "title": "SpaceDetailOut",
+        "type": "object"
+      },
+      "SpaceHeader": {
+        "description": "A space as the expense and payment screens need it: no members, no balances.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_username": {
+            "title": "Owner Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "icon",
+          "currency",
+          "owner_username",
+          "created_at"
+        ],
+        "title": "SpaceHeader",
+        "type": "object"
+      },
+      "SpaceListOut": {
+        "description": "Home page: overall balance per currency and the spaces, newest activity first.",
+        "properties": {
+          "overall": {
+            "items": {
+              "$ref": "#/components/schemas/OverallLine"
+            },
+            "title": "Overall",
+            "type": "array"
+          },
+          "spaces": {
+            "items": {
+              "$ref": "#/components/schemas/SpaceCard"
+            },
+            "title": "Spaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "overall",
+          "spaces"
+        ],
+        "title": "SpaceListOut",
+        "type": "object"
+      },
+      "SpaceUpdate": {
+        "description": "Edit the space (specs § 10): any of the name and icon (any member), and the currency (the owner, before any expense).\n\nA field that is left out, or null, is left as it is. The name and icon follow the same rules as when creating.",
+        "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "SpaceUpdate",
+        "type": "object"
+      },
+      "SplitType": {
+        "enum": [
+          "equal",
+          "exact",
+          "percent",
+          "shares"
+        ],
+        "title": "SplitType",
+        "type": "string"
+      },
+      "TokenPair": {
+        "description": "What sign up, sign in and refresh return.\n\nThe app should keep its own inactivity timer using `idle_timeout_seconds`, and treat any\n401 with code `session_expired` as \"send the user back to the Login page\".",
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "idle_timeout_seconds": {
+            "title": "Idle Timeout Seconds",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token",
+          "expires_in",
+          "idle_timeout_seconds"
+        ],
+        "title": "TokenPair",
+        "type": "object"
+      },
+      "TransactionListOut": {
+        "description": "One page, newest first. Pass `next_before` back as `before` for the next page. It is None on the last page.\n\n`next_before` is an opaque marker (do not build or read one): it says where this page ended.",
+        "properties": {
+          "items": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "expense": "#/components/schemas/ExpenseTransaction",
+                  "payment": "#/components/schemas/PaymentTransaction"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ExpenseTransaction"
+                },
+                {
+                  "$ref": "#/components/schemas/PaymentTransaction"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "TransactionListOut",
+        "type": "object"
+      },
+      "UnreadCount": {
+        "properties": {
+          "unread_count": {
+            "title": "Unread Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread_count"
+        ],
+        "title": "UnreadCount",
+        "type": "object"
+      },
+      "UserMe": {
+        "description": "GET /users/me: the signed-in person's own profile, so the phone is theirs to see.",
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notifications_on": {
+            "title": "Notifications On",
+            "type": "boolean"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "phone",
+          "currency",
+          "notifications_on"
+        ],
+        "title": "UserMe",
+        "type": "object"
+      },
+      "UserSearchResult": {
+        "description": "A row on the Add People page.",
+        "properties": {
+          "is_friend": {
+            "title": "Is Friend",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "is_friend"
+        ],
+        "title": "UserSearchResult",
+        "type": "object"
+      },
+      "UserSummary": {
+        "description": "Public view of a person. Never includes the phone number.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "name"
+        ],
+        "title": "UserSummary",
+        "type": "object"
+      },
+      "UserUpdate": {
+        "additionalProperties": false,
+        "description": "Profile, Edit and the preferences (specs § 13): any of these. A field left out, or null, stays as it is.\n\nThe username and the phone number cannot be changed, so sending them is an error rather than being ignored.\nThe theme is not here: it stays on the phone.",
+        "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "notifications_on": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notifications On"
+          }
+        },
+        "title": "UserUpdate",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerifyOTPRequest": {
+        "description": "Forgot Password, step b: the id from the request and the 6-digit code.",
+        "properties": {
+          "code": {
+            "maxLength": 10,
+            "minLength": 4,
+            "pattern": "^[0-9]+$",
+            "title": "Code",
+            "type": "string"
+          },
+          "reset_id": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Reset Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reset_id",
+          "code"
+        ],
+        "title": "VerifyOTPRequest",
+        "type": "object"
+      },
+      "VerifyOTPResponse": {
+        "properties": {
+          "expires_in_seconds": {
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "reset_token": {
+            "title": "Reset Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reset_token",
+          "expires_in_seconds"
+        ],
+        "title": "VerifyOTPResponse",
+        "type": "object"
+      },
+      "VerifySignupRequest": {
+        "description": "Verify phone: the id from the sign-up and the 6-digit code.",
+        "properties": {
+          "code": {
+            "maxLength": 10,
+            "minLength": 4,
+            "pattern": "^[0-9]+$",
+            "title": "Code",
+            "type": "string"
+          },
+          "pending_id": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Pending Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pending_id",
+          "code"
+        ],
+        "title": "VerifySignupRequest",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "UOMi API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/auth/check-phone": {
+      "get": {
+        "description": "Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address.",
+        "operationId": "check_phone_auth_check_phone_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "phone",
+            "required": true,
+            "schema": {
+              "maxLength": 30,
+              "title": "Phone",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Phone",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/check-username": {
+      "get": {
+        "description": "The live \"✓ available / ✗ taken\" under the username field on Create Account.",
+        "operationId": "check_username_auth_check_username_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "maxLength": 50,
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Username",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/forgot": {
+      "post": {
+        "description": "Forgot Password: a username -> a code is texted to its phone, and the masked number comes back.\n\nThe reply has the same shape for a username that does not exist.",
+        "operationId": "forgot_auth_forgot_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forgot",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "description": "Sign In -> Home Page. Same error for a wrong username or password; 429 after too many tries.",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "description": "Profile > Logout -> back to the Login Page. Ends this device's session.",
+        "operationId": "logout_auth_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/otp/resend": {
+      "post": {
+        "description": "\"Resend code\" on either code screen: send `pending_id` (sign-up) or `reset_id` (forgot password).",
+        "operationId": "otp_resend_auth_otp_resend_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResendOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Otp Resend",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "description": "Trade a refresh token for new tokens. Fails with `session_expired` if the user was idle too long.",
+        "operationId": "refresh_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "description": "Create Account -> Verify phone. Texts a code; the account does NOT exist until `/auth/register/verify`.",
+        "operationId": "register_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignupStarted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/register/verify": {
+      "post": {
+        "description": "Verify phone -> Home Page. The right code creates the account and signs the new user straight in.",
+        "operationId": "register_verify_auth_register_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifySignupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Verify",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/reset": {
+      "post": {
+        "description": "Set new password -> then sign in again (Login Page, with `username` filled in).",
+        "operationId": "reset_auth_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/verify-otp": {
+      "post": {
+        "description": "Enter the code: right code -> reset token for the Set new password screen.",
+        "operationId": "verify_otp_auth_verify_otp_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyOTPRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyOTPResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Otp",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/expenses/{expense_id}": {
+      "delete": {
+        "description": "Delete (creator only). Balances recalculate and the cards about it go.",
+        "operationId": "delete_expense_expenses__expense_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "expense_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Expense Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Expense",
+        "tags": [
+          "expenses"
+        ]
+      },
+      "get": {
+        "description": "The expense screen: who paid, the split and each person's answer.",
+        "operationId": "get_expense_expenses__expense_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "expense_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Expense Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Expense",
+        "tags": [
+          "expenses"
+        ]
+      },
+      "put": {
+        "description": "Edit (creator only). Every answer is reset and everyone in the split is asked again.",
+        "operationId": "update_expense_expenses__expense_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "expense_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Expense Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Expense",
+        "tags": [
+          "expenses"
+        ]
+      }
+    },
+    "/expenses/{expense_id}/accept": {
+      "post": {
+        "description": "The tick on your own share.",
+        "operationId": "accept_share_expenses__expense_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "expense_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Expense Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Share",
+        "tags": [
+          "expenses"
+        ]
+      }
+    },
+    "/expenses/{expense_id}/reject": {
+      "post": {
+        "description": "The cross on your own share. The expense becomes disputed and its creator is told.",
+        "operationId": "reject_share_expenses__expense_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "expense_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Expense Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject Share",
+        "tags": [
+          "expenses"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Liveness probe: answers 200 while the process is up. No sign-in, and it touches no data.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/notifications": {
+      "get": {
+        "description": "Newest first. Use `next_before` from the response as `before` to load the next page.",
+        "operationId": "list_notifications_notifications_get",
+        "parameters": [
+          {
+            "description": "Id of the last card on the previous page",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Id of the last card on the previous page",
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Notifications",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/notifications/read-all": {
+      "patch": {
+        "description": "Mark every card of the signed-in user read; `updated_count` is how many were unread.",
+        "operationId": "read_all_notifications_notifications_read_all_patch",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkAllReadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read All Notifications",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/notifications/unread-count": {
+      "get": {
+        "description": "How many cards the signed-in user has not read yet.",
+        "operationId": "unread_count_notifications_unread_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCount"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unread Count",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/notifications/{notification_id}": {
+      "patch": {
+        "description": "Mark a card read (or unread).",
+        "operationId": "update_notification_notifications__notification_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Notification Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Notification",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/settlements/{settlement_id}": {
+      "get": {
+        "description": "The payment screen: status and when it was answered.",
+        "operationId": "get_settlement_settlements__settlement_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "settlement_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Settlement Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Settlement",
+        "tags": [
+          "settlements"
+        ]
+      }
+    },
+    "/settlements/{settlement_id}/cancel": {
+      "post": {
+        "description": "The payer takes back a payment nobody has answered yet.",
+        "operationId": "cancel_settlement_settlements__settlement_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "settlement_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Settlement Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Settlement",
+        "tags": [
+          "settlements"
+        ]
+      }
+    },
+    "/settlements/{settlement_id}/confirm": {
+      "post": {
+        "description": "The receiver says the money arrived. Only a confirmed payment changes a balance.",
+        "operationId": "confirm_settlement_settlements__settlement_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "settlement_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Settlement Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confirm Settlement",
+        "tags": [
+          "settlements"
+        ]
+      }
+    },
+    "/settlements/{settlement_id}/reject": {
+      "post": {
+        "description": "The receiver says it did not happen.",
+        "operationId": "reject_settlement_settlements__settlement_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "settlement_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Settlement Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject Settlement",
+        "tags": [
+          "settlements"
+        ]
+      }
+    },
+    "/spaces": {
+      "get": {
+        "description": "Home page: overall balance per currency and the spaces, latest activity first.",
+        "operationId": "list_spaces_spaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Spaces",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "post": {
+        "description": "Add People page, tick to create -> 201 + the new space (Group page).",
+        "operationId": "create_space_spaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Space",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}": {
+      "delete": {
+        "description": "Delete space (the owner only, when everyone is settled up). The other members are told.",
+        "operationId": "delete_space_spaces__space_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Space",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "get": {
+        "description": "Home page, tap a space card -> Group page: expenses, payments and who owes whom.",
+        "operationId": "get_space_spaces__space_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Space",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "patch": {
+        "description": "Space settings, Edit: rename and icon (any member), currency (the owner, before the first expense).",
+        "operationId": "update_space_spaces__space_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Space",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/expenses": {
+      "get": {
+        "description": "Every expense of a space, newest first. Pass the previous page's `next_before` as `before`.",
+        "operationId": "list_expenses_spaces__space_id__expenses_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Expenses",
+        "tags": [
+          "expenses"
+        ]
+      },
+      "post": {
+        "description": "Add expense. The server works out every share; everyone but the payer and the creator is asked.",
+        "operationId": "create_expense_spaces__space_id__expenses_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Expense",
+        "tags": [
+          "expenses"
+        ]
+      }
+    },
+    "/spaces/{space_id}/leave": {
+      "post": {
+        "description": "Leave the space (any member except the owner, when they are settled up).",
+        "operationId": "leave_space_spaces__space_id__leave_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Leave Space",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/members": {
+      "post": {
+        "description": "Add people (any member). They are in at once and told, with no accept step. At most 50 people.",
+        "operationId": "add_members_spaces__space_id__members_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMembersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Members",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/members/{username}": {
+      "delete": {
+        "description": "Remove a member (the owner only, when that member is settled up in the space).",
+        "operationId": "remove_member_spaces__space_id__members__username__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "maxLength": 50,
+              "minLength": 1,
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Member",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/payees": {
+      "get": {
+        "description": "The people the viewer owes in this space, with what is owed and the most that can be recorded now.",
+        "operationId": "list_payees_spaces__space_id__payees_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PayeeOut"
+                  },
+                  "title": "Response List Payees Spaces  Space Id  Payees Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Payees",
+        "tags": [
+          "settlements"
+        ]
+      }
+    },
+    "/spaces/{space_id}/settlements": {
+      "post": {
+        "description": "Record a payment made outside the app. It is pending until the receiver answers.",
+        "operationId": "create_settlement_spaces__space_id__settlements_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Space Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettlementCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Settlement",
+        "tags": [
+          "settlements"
+        ]
+      }
+    },
+    "/transactions": {
+      "get": {
+        "description": "Every expense in the viewer's spaces and every payment they are part of, newest first.\n\n`kind` filters, `space_id` narrows to one space (404 if the viewer is not in it). Pass the previous page's\n`next_before` as `before` to get the next page.",
+        "operationId": "list_transactions_transactions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "expenses",
+                "payments"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "space_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Space Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 60,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Transactions",
+        "tags": [
+          "transactions"
+        ]
+      }
+    },
+    "/users/me": {
+      "get": {
+        "description": "Who am I: the username, name, phone, default currency and notifications switch of the signed-in user.",
+        "operationId": "read_me_users_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMe"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Me",
+        "tags": [
+          "users"
+        ]
+      },
+      "patch": {
+        "description": "Profile, Edit and the preferences: the name, the default currency and the notifications switch.",
+        "operationId": "update_me_users_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMe"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Me",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/me/delete": {
+      "post": {
+        "description": "Profile, Delete my account: asks for the password again. Refused (403) until the person is settled up in every\nspace (`not_settled`) and while they own a space with other people in it (`owns_shared_space`); both name the spaces.\nThe account is anonymised, not erased: see services/account_service.py.",
+        "operationId": "delete_me_users_me_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Me",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/me/devices": {
+      "delete": {
+        "description": "Forget this phone's push token (sign-out). Always 204, even for a token the server never had.",
+        "operationId": "remove_device_users_me_devices_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRemove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Device",
+        "tags": [
+          "users"
+        ]
+      },
+      "put": {
+        "description": "Save this phone's push token (call it on every launch). The phone belongs to this sign-in and goes when it does.",
+        "operationId": "register_device_users_me_devices_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Register Device",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/me/export": {
+      "get": {
+        "description": "Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications.",
+        "operationId": "export_me_users_me_export_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Me",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/search": {
+      "get": {
+        "description": "Add People page, live search: the app sends one request per pause in typing (300 ms).\n\nSearching is limited per address and per user. Looking someone up by a complete phone number is\nlimited much harder, because that is the lookup that can reveal who is registered: a person adding\nfriends needs a handful of these, a script testing numbers needs thousands.",
+        "operationId": "search_users_users_search_get",
+        "parameters": [
+          {
+            "description": "Username, or a full phone number",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "description": "Username, or a full phone number",
+              "maxLength": 50,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserSearchResult"
+                  },
+                  "title": "Response Search Users Users Search Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Users",
+        "tags": [
+          "users"
+        ]
+      }
+    }
+  }
+}

@@ -1,9 +1,12 @@
-"""Expense (a "bill"): one card on the Group page. Round 1 only reads these; creating them is a later module."""
+"""Expense (a "bill"): one card on the Space page, made, edited and deleted by its creator (expense_service.py).
+
+Who owes what is in `ExpenseShare` (expense_split.py). An edit rewrites the shares and asks everyone again.
+"""
 
 import datetime as dt
 import enum
 
-from sqlalchemy import Date, Enum, ForeignKey, String
+from sqlalchemy import BigInteger, Date, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, UTCDateTime, utcnow
@@ -24,7 +27,7 @@ class Expense(Base):
     paid_by: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))
     created_by: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))  # may differ from paid_by
     description: Mapped[str] = mapped_column(String(50))
-    amount_minor: Mapped[int]  # integer minor units (paise, cents)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)  # integer minor units (paise, cents), 64-bit
     split_type: Mapped[SplitType] = mapped_column(
         Enum(SplitType, native_enum=False, length=20), default=SplitType.EQUAL
     )

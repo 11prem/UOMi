@@ -5,8 +5,21 @@ from sqlalchemy.orm import Session
 
 from app.models.group_member import SpaceMember
 from app.models.user import User
-from app.schemas.user import UserSearchResult
+from app.schemas.user import UserSearchResult, UserUpdate
 from app.utils.validators import parse_full_phone
+
+def update_me(db: Session, user: User, data: UserUpdate) -> User:
+    """Edit the signed-in person's own name and preferences. Their username and phone never change."""
+    if data.name is not None:
+        user.name = data.name
+    if data.currency is not None:
+        user.currency = data.currency
+    if data.notifications_on is not None:
+        user.notifications_on = data.notifications_on
+    db.commit()
+    db.refresh(user)
+    return user
+
 
 SEARCH_LIMIT = 10
 MIN_LETTERS_FOR_EVERYONE = 3
@@ -35,7 +48,7 @@ def search_users(db: Session, me: str, query: str) -> list[UserSearchResult]:
 
     rows = db.execute(
         select(User, is_friend)
-        .where(User.username != me, condition)
+        .where(User.username != me, User.deleted_at.is_(None), condition)
         .order_by(case((is_friend, 0), else_=1), User.username)
         .limit(SEARCH_LIMIT)
     ).all()
@@ -46,7 +59,7 @@ def search_users(db: Session, me: str, query: str) -> list[UserSearchResult]:
 
     phone = parse_full_phone(text)
     if phone is not None:
-        match = db.scalar(select(User).where(User.phone == phone, User.username != me))
+        match = db.scalar(select(User).where(User.phone == phone, User.username != me, User.deleted_at.is_(None)))
         if match is not None and all(r.username != match.username for r in results):
             friend_usernames = set(db.scalars(friends))
             results.insert(

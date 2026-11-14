@@ -7,7 +7,7 @@ Only CONFIRMED settlements count towards balances.
 import enum
 from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, String
+from sqlalchemy import BigInteger, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, UTCDateTime, utcnow
@@ -27,7 +27,7 @@ class Settlement(Base):
     space_id: Mapped[int] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"), index=True)
     payer: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))  # who handed over money
     payee: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))  # who received it
-    amount_minor: Mapped[int]  # integer minor units (paise, cents)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)  # integer minor units (paise, cents), 64-bit
     status: Mapped[SettlementStatus] = mapped_column(
         Enum(SettlementStatus, native_enum=False, length=20), default=SettlementStatus.PENDING
     )

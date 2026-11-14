@@ -10,8 +10,9 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models.login_attempt import LoginAttempt
 from app.models.password_reset import PasswordReset
+from app.models.pending_signup import PendingSignup
 from app.utils.rate_limit import SlidingWindowLimiter, client_ip
-from tests.helpers import PHONES, auth, db_all, error_code, register, register_payload
+from tests.helpers import PHONES, auth, db_all, error_code, last_code, register, register_payload, start_signup, wrong_code
 
 # --- The limiter -------------------------------------------------------------
 
@@ -123,9 +124,9 @@ def test_each_address_has_its_own_budget_behind_a_trusted_proxy(client, monkeypa
             headers={"X-Forwarded-For": address},
         )
 
-    assert sign_up("alice", "198.51.100.1").status_code == 201
+    assert sign_up("alice", "198.51.100.1").status_code == 202
     assert sign_up("bob", "198.51.100.1").status_code == 429
-    assert sign_up("bob", "198.51.100.2").status_code == 201
+    assert sign_up("bob", "198.51.100.2").status_code == 202
 
 
 def test_a_forged_forwarded_header_does_not_dodge_the_limit(client, monkeypatch):
@@ -138,7 +139,7 @@ def test_a_forged_forwarded_header_does_not_dodge_the_limit(client, monkeypatch)
         json=register_payload(username="bob", phone=PHONES["bob"]),
         headers={"X-Forwarded-For": "198.51.100.2"},
     )
-    assert first.status_code == 201 and second.status_code == 429
+    assert first.status_code == 202 and second.status_code == 429
 
 
 # --- Search (2.1) ------------------------------------------------------------
@@ -181,64 +182,85 @@ def test_looking_people_up_by_phone_number_has_its_own_tight_limit(client, monke
 # --- Forgot password and codes (2.2) ----------------------------------------
 
 
-def forgot(client, phone):
-    return client.post("/auth/forgot", json={"phone": phone})
+def forgot(client, username):
+    return client.post("/auth/forgot", json={"username": username})
 
 
-def test_forgot_is_limited_per_address_across_phone_numbers(client, sms_outbox, monkeypatch):
+def test_forgot_is_limited_per_address_across_usernames(client, sms_outbox, monkeypatch):
     monkeypatch.setattr(settings, "FORGOT_MAX_PER_IP_PER_HOUR", 2)
     register(client, "alice")
-    assert forgot(client, PHONES["alice"]).status_code == 202
-    assert forgot(client, "9000000001").status_code == 202
-    blocked = forgot(client, "9000000002")
+    sms_outbox.clear()  # the sign-up code
+    assert forgot(client, "alice").status_code == 202
+    assert forgot(client, "ghost1").status_code == 202
+    blocked = forgot(client, "ghost2")
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
     assert len(db_all(select(PasswordReset))) == 2  # no code was created for the blocked request
-    assert len(sms_outbox) == 1  # only alice's number is registered
+    assert len(sms_outbox) == 1  # only alice has an account
 
 
 def test_verify_otp_is_limited_per_address(client, monkeypatch):
-    monkeypatch.setattr(settings, "VERIFY_OTP_MAX_PER_IP_PER_HOUR", 3)
+    register(client, "alice")  # signing up used one of this address's checks (the sign-up code)
+    monkeypatch.setattr(settings, "VERIFY_OTP_MAX_PER_IP_PER_HOUR", 4)
+    reset_id = forgot(client, "alice").json()["reset_id"]
     for _ in range(3):
-        wrong = client.post("/auth/verify-otp", json={"phone": PHONES["alice"], "code": "123456"})
+        wrong = client.post("/auth/verify-otp", json={"reset_id": reset_id, "code": wrong_code(last_code(PHONES["alice"]))})
         assert wrong.status_code == 400
-    blocked = client.post("/auth/verify-otp", json={"phone": PHONES["alice"], "code": "123456"})
+    blocked = client.post("/auth/verify-otp", json={"reset_id": reset_id, "code": "123456"})
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
 
 
 def move_requests_back(days: int) -> None:
+    """Make every sign-up and reset request look `days` older, so the daily cap sees them on an earlier day."""
     with SessionLocal() as session:
-        for row in session.scalars(select(PasswordReset)):
-            row.created_at -= timedelta(days=days)
+        for model in (PasswordReset, PendingSignup):
+            for row in session.scalars(select(model)):
+                row.created_at -= timedelta(days=days)
         session.commit()
 
 
-def test_daily_code_cap_stops_every_number_alike_and_resets_the_next_day(client, sms_outbox, monkeypatch):
-    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 2)
+def test_daily_code_cap_stops_every_username_alike_and_resets_the_next_day(client, sms_outbox, monkeypatch):
     for name in ("alice", "bob", "carol"):
         register(client, name)
-    assert forgot(client, PHONES["alice"]).status_code == 202
-    assert forgot(client, PHONES["bob"]).status_code == 202
+    move_requests_back(1)  # the sign-up codes belong to an earlier day
+    sms_outbox.clear()
+    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 2)
+    assert forgot(client, "alice").status_code == 202
+    assert forgot(client, "bob").status_code == 202
 
-    registered = forgot(client, PHONES["carol"])
-    unknown = forgot(client, "9000000009")
-    for capped in (registered, unknown):  # the answer does not depend on whether the number is registered
+    registered = forgot(client, "carol")
+    unknown = forgot(client, "ghost")
+    for capped in (registered, unknown):  # the answer does not depend on whether the username exists
         assert capped.status_code == 429 and error_code(capped) == "too_many_requests"
         assert int(capped.headers["Retry-After"]) > 0
     assert len(sms_outbox) == 2
 
     move_requests_back(1)  # a new UTC day
-    assert forgot(client, PHONES["carol"]).status_code == 202
+    assert forgot(client, "carol").status_code == 202
     assert len(sms_outbox) == 3
+
+
+def test_the_daily_cap_counts_sign_up_codes_and_resends_too(client, sms_outbox, monkeypatch):
+    monkeypatch.setattr(settings, "SMS_DAILY_CAP", 3)
+    monkeypatch.setattr(settings, "OTP_RESEND_COOLDOWN_SECONDS", 0)
+    started = start_signup(client, "alice")  # 1 text
+    assert started.status_code == 202
+    pending_id = started.json()["pending_id"]
+    assert client.post("/auth/otp/resend", json={"id": pending_id}).status_code == 200  # 2
+    assert forgot(client, "ghost").status_code == 202  # 3: a made-up username counts like a real one
+    capped = start_signup(client, "bob")
+    assert capped.status_code == 429 and error_code(capped) == "too_many_requests"
+    assert client.post("/auth/otp/resend", json={"id": pending_id}).status_code == 429
+    assert len(sms_outbox) == 2  # the made-up username was never texted
 
 
 def test_daily_code_cap_warns_at_80_percent_and_logs_when_reached(client, sms_outbox, monkeypatch, caplog):
     monkeypatch.setattr(settings, "SMS_DAILY_CAP", 5)
-    with caplog.at_level(logging.WARNING, logger="app.services.auth_service"):
+    with caplog.at_level(logging.WARNING, logger="app.services.otp_service"):
         for i in range(1, 5):
-            assert forgot(client, f"900000000{i}").status_code == 202
+            assert forgot(client, f"ghost{i}").status_code == 202
         assert "Daily code cap: 4 of 5 used" in caplog.text
-        assert forgot(client, "9000000005").status_code == 202
-        assert forgot(client, "9000000006").status_code == 429
+        assert forgot(client, "ghost5").status_code == 202
+        assert forgot(client, "ghost6").status_code == 429
         assert "Daily code cap of 5 reached" in caplog.text
 
 

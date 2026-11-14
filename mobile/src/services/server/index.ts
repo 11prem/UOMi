@@ -10,20 +10,31 @@ import {
   ms,
   toNotification,
   toOverall,
+  toPayee,
+  toSettlementDetail,
   toSpaceDetail,
+  toTransaction,
   toUser,
   type MeDto,
   type NotificationDto,
   type NotificationListDto,
+  type PayeeDto,
   type SearchResultDto,
+  type SettlementDetailDto,
   type SpaceDetailDto,
   type SpaceListDto,
+  type TransactionDto,
+  type TransactionListDto,
 } from './mappers';
 
 export type { TokenStore, StoredTokens } from './tokens';
 
 /** `tokenStore` defaults to expo-secure-store (AsyncStorage in a browser); `fetchImpl` and `now` are for tests. */
 export type ServerOptions = HttpOptions;
+
+/** The Transactions list is fetched this many rows at a time (the server allows up to 100), and at most this many times. */
+export const TRANSACTIONS_PAGE = 100;
+export const TRANSACTIONS_MAX_PAGES = 20;
 
 const no = async (): Promise<never> => {
   throw notOnServer();
@@ -53,6 +64,9 @@ export function createServerServices(opts: ServerOptions): Services {
     const who = await viewer();
     return toSpaceDetail(await http.request<SpaceDetailDto>(method, path, body), who.user);
   };
+  const settlementPath = (id: string) => `/settlements/${encodeURIComponent(id)}`;
+  const settlementDetail = async (path: string, method = 'GET', body?: unknown) =>
+    toSettlementDetail(await http.request<SettlementDetailDto>(method, path, body));
 
   return {
     mode: 'server',
@@ -117,16 +131,47 @@ export function createServerServices(opts: ServerOptions): Services {
       overall: async () => (await home()).overall.map(toOverall),
       get: (id) => detail(`/spaces/${encodeURIComponent(id)}`),
       create: async ({ name, icon, currency, memberIds }) => (await detail('/spaces', 'POST', { name, icon, currency, usernames: memberIds })).space,
-      update: no,
-      addMembers: no,
-      removeMember: no,
-      leave: no,
-      remove: no,
+      update: async (id, p) => (await detail(`/spaces/${encodeURIComponent(id)}`, 'PATCH', { name: p.name, icon: p.icon, currency: p.currency })).space, // only what is given is sent
+      addMembers: async (id, userIds) => void (await detail(`/spaces/${encodeURIComponent(id)}/members`, 'POST', { usernames: userIds })),
+      removeMember: async (id, userId) => void (await http.request<void>('DELETE', `/spaces/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`)),
+      leave: async (id) => void (await http.request<void>('POST', `/spaces/${encodeURIComponent(id)}/leave`)),
+      remove: async (id) => void (await http.request<void>('DELETE', `/spaces/${encodeURIComponent(id)}`)),
     },
 
     expenses: { get: no, create: no, update: no, remove: no, acceptShare: no, rejectShare: no },
-    settlements: { get: no, payees: no, create: no, confirm: no, reject: no, cancel: no },
-    transactions: { list: no },
+    settlements: {
+      get: (id) => settlementDetail(settlementPath(id)),
+      payees: async (spaceId) => (await http.request<PayeeDto[]>('GET', `/spaces/${encodeURIComponent(spaceId)}/payees`)).map(toPayee),
+      create: async ({ spaceId, toUserId, amountMinor }) =>
+        (await settlementDetail(`/spaces/${encodeURIComponent(spaceId)}/settlements`, 'POST', { to_username: toUserId, amount_minor: amountMinor })).settlement,
+      confirm: async (id) => void (await http.request<SettlementDetailDto>('POST', `${settlementPath(id)}/confirm`)),
+      reject: async (id) => void (await http.request<SettlementDetailDto>('POST', `${settlementPath(id)}/reject`)),
+      cancel: async (id) => void (await http.request<SettlementDetailDto>('POST', `${settlementPath(id)}/cancel`)),
+    },
+    transactions: {
+      list: async ({ kind, spaceId }) => {
+        const who = await viewer();
+        const rows: TransactionDto[] = [];
+        let before: string | null = null;
+        for (let page = 0; page < TRANSACTIONS_MAX_PAGES; page++) {
+          const query: string = `kind=${kind}&limit=${TRANSACTIONS_PAGE}${spaceId ? `&space_id=${encodeURIComponent(spaceId)}` : ''}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
+          let got: TransactionListDto;
+          try {
+            got = await http.request<TransactionListDto>('GET', `/transactions?${query}`);
+          } catch (e) {
+            // An older server has no such route. With no space picked, "not found" can only mean that: a space that is
+            // gone also comes back as not_found, but only when one was asked for.
+            if (page === 0 && !spaceId && e instanceof AppError && e.code === 'not_found') throw notOnServer();
+            throw e;
+          }
+          rows.push(...got.items);
+          before = got.next_before;
+          if (before === null) break;
+        }
+        // Newest first by the date the app shows (an expense's day on this device, a payment's moment). The sort is stable.
+        return rows.map((r) => toTransaction(r, who.user)).sort((a, b) => b.date - a.date);
+      },
+    },
 
     notifications: {
       async list() {

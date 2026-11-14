@@ -16,21 +16,31 @@ from app.models.payment import SettlementStatus
 from app.schemas.user import UserSummary
 from app.utils.validators import clean_name, validate_username
 
-MAX_NEW_MEMBERS = 49  # a space holds at most 50 people, counting the creator
+MAX_SPACE_PEOPLE = 50  # a space holds at most 50 people, counting the creator
+MAX_NEW_MEMBERS = MAX_SPACE_PEOPLE - 1
+MAX_SPACE_NAME = 30  # specs § 6.1
+SPACE_ICONS: tuple[str, ...] = ("home", "trip", "food", "office", "friends", "car", "party", "other")  # specs § 6.1
 
 
 class SpaceCreate(BaseModel):
     """Add People page, tick to create: the name + icon from the pop-up and the numbered members list."""
 
-    name: str = Field(min_length=1, max_length=100)
-    icon: str = Field(pattern=r"^[a-z0-9_-]{1,50}$")  # key chosen in the icon picker
+    name: str = Field(min_length=1, max_length=500)  # a guard against huge bodies; the validator enforces 1-30
+    icon: str  # one of SPACE_ICONS
     currency: str | None = None  # a supported code; left out means the creator's default currency
     usernames: list[str] = Field(default_factory=list, max_length=MAX_NEW_MEMBERS)
 
     @field_validator("name")
     @classmethod
     def check_name(cls, v: str) -> str:
-        return clean_name(v)
+        return clean_name(v, MAX_SPACE_NAME)
+
+    @field_validator("icon")
+    @classmethod
+    def check_icon(cls, v: str) -> str:
+        if v not in SPACE_ICONS:
+            raise ValueError(f"Choose one of the icons: {', '.join(SPACE_ICONS)}")
+        return v
 
     @field_validator("currency")
     @classmethod
@@ -43,6 +53,55 @@ class SpaceCreate(BaseModel):
     @classmethod
     def check_usernames(cls, values: list[str]) -> list[str]:
         """Lowercase each one and drop repeats, keeping the order of the numbered list."""
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for value in values:
+            username = validate_username(value)
+            if username not in seen:
+                seen.add(username)
+                cleaned.append(username)
+        return cleaned
+
+
+class SpaceUpdate(BaseModel):
+    """Edit the space (specs § 10): any of the name and icon (any member), and the currency (the owner, before any expense).
+
+    A field that is left out, or null, is left as it is. The name and icon follow the same rules as when creating.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=500)  # the validator enforces 1-30
+    icon: str | None = None
+    currency: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str | None) -> str | None:
+        return None if v is None else clean_name(v, MAX_SPACE_NAME)
+
+    @field_validator("icon")
+    @classmethod
+    def check_icon(cls, v: str | None) -> str | None:
+        if v is not None and v not in SPACE_ICONS:
+            raise ValueError(f"Choose one of the icons: {', '.join(SPACE_ICONS)}")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def check_currency(cls, v: str | None) -> str | None:
+        if v is not None and v not in SUPPORTED_CURRENCIES:
+            raise ValueError(f"Currency must be one of: {', '.join(SUPPORTED_CURRENCIES)}")
+        return v
+
+
+class AddMembersRequest(BaseModel):
+    """Add people (specs § 10): by username, any member may. They are members at once, with no accept step."""
+
+    usernames: list[str] = Field(min_length=1, max_length=MAX_NEW_MEMBERS)
+
+    @field_validator("usernames")
+    @classmethod
+    def check_usernames(cls, values: list[str]) -> list[str]:
+        """Lowercase each one and drop repeats, keeping the order."""
         seen: set[str] = set()
         cleaned: list[str] = []
         for value in values:
@@ -88,6 +147,17 @@ class MemberOut(BaseModel):
     username: str
     name: str
     position: int
+
+
+class SpaceHeader(BaseModel):
+    """A space as the expense and payment screens need it: no members, no balances."""
+
+    id: int
+    name: str
+    icon: str
+    currency: str
+    owner_username: str
+    created_at: dt.datetime
 
 
 class ExpenseRow(BaseModel):

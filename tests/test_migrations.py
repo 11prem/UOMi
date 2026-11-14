@@ -61,6 +61,23 @@ def run_script(db: Path, sql: str, foreign_keys: bool = False) -> None:
         con.commit()
 
 
+def constraints(db: Path) -> dict[str, dict[str, set[tuple]]]:
+    """Every table's indexes as (name, unique, columns) and foreign keys as (column, table it points at, its column, on delete).
+
+    A name is kept only for an index somebody created (an automatic one, for a unique column, has no name worth comparing).
+    """
+    tables = [name for (name,) in rows(db, "SELECT name FROM sqlite_master WHERE type = 'table'")]
+    found: dict[str, dict[str, set[tuple]]] = {}
+    for table in tables:
+        indexes = set()
+        for _, name, unique, origin, _ in rows(db, f"PRAGMA index_list({table})"):
+            columns = tuple(column for _, _, column in rows(db, f"PRAGMA index_info({name})"))
+            indexes.add((name if origin == "c" else "", bool(unique), columns))
+        keys = {(source, target, to, on_delete) for _, _, target, source, to, _, on_delete, _ in rows(db, f"PRAGMA foreign_key_list({table})")}
+        found[table] = {"indexes": indexes, "foreign_keys": keys}
+    return found
+
+
 def schema(db: Path) -> dict[str, set[tuple]]:
     """Every table's columns as (name, type, not null, primary key)."""
     tables = [name for (name,) in rows(db, "SELECT name FROM sqlite_master WHERE type = 'table'")]
@@ -142,6 +159,47 @@ def test_0003_adds_the_previous_token_column_and_its_downgrade_removes_it(db_hea
     assert rows(db, "SELECT name FROM sqlite_master WHERE name = 'ix_refresh_tokens_previous_token_hash'") == []
 
 
+NEW_RESET_COLUMNS = {"public_id", "requested_username", "locked_until", "send_count", "last_sent_at", "valid_until"}
+
+
+def test_0004_adds_pending_signups_and_the_reset_columns_and_its_downgrade_removes_them(db_head, tmp_path):
+    def columns(db: Path, table: str) -> set[str]:
+        return {row[1] for row in rows(db, f"PRAGMA table_info({table})")}
+
+    assert {"public_id", "username", "phone", "password_hash", "code_hash", "valid_until"} <= columns(db_head, "pending_signups")
+    assert NEW_RESET_COLUMNS <= columns(db_head, "password_resets")
+
+    db = tmp_path / "copy.db"
+    shutil.copy(db_head, db)
+    alembic(db, "downgrade", "0003")
+    assert columns(db, "pending_signups") == set()
+    assert not NEW_RESET_COLUMNS & columns(db, "password_resets")
+    assert rows(
+        db,
+        "SELECT name FROM sqlite_master WHERE name LIKE 'ix_pending_signups%' "
+        "OR name IN ('ix_password_resets_public_id', 'ix_password_resets_requested_username')",
+    ) == []
+
+
+def test_a_reset_request_made_before_0004_survives_the_upgrade(db_head, tmp_path):
+    db = tmp_path / "copy.db"
+    shutil.copy(db_head, db)
+    alembic(db, "downgrade", "0003")
+    run_script(
+        db,
+        """
+        INSERT INTO password_resets (id, phone, username, code_hash, attempts, created_at, expires_at)
+            SELECT 7, phone, username, '0000', 2, '2026-01-02 00:00:00.000000', '2026-01-02 00:05:00.000000'
+            FROM users WHERE username = 'alice';
+        """,
+    )
+
+    alembic(db, "upgrade", "head")
+
+    # the old row is kept; it simply has no id for the app, and counts as one text sent
+    assert rows(db, "SELECT id, attempts, public_id, send_count, locked_until FROM password_resets") == [(7, 2, None, 1, None)]
+
+
 def test_downgrade_returns_to_0001_and_keeps_what_it_can(db_0001, db_head, tmp_path):
     db = tmp_path / "copy.db"
     shutil.copy(db_head, db)
@@ -160,6 +218,7 @@ def test_downgrade_returns_to_0001_and_keeps_what_it_can(db_0001, db_head, tmp_p
     alembic(db, "downgrade", "0001")
 
     assert schema(db) == schema(db_0001)
+    assert constraints(db) == constraints(db_0001)  # the indexes and the foreign keys come back too, not only the columns
     assert rows(db, "SELECT id, title, amount, split_type FROM expenses ORDER BY id") == [
         (1, "Dinner", 123.45, "EQUAL"),
         (2, "x" * 50, 19.99, "EXACT"),
@@ -175,3 +234,64 @@ def test_downgrade_returns_to_0001_and_keeps_what_it_can(db_0001, db_head, tmp_p
         (4, "SETTLEMENT_REQUEST", "Bob says he paid you.", "Bob says he paid you.", 0),
         (5, "PAYMENT_REMINDER", "You owe Alice.", "You owe Alice.", 0),
     ]  # the SPACE_DELETED card (no old type) is gone
+
+
+def test_every_migration_upgrades_and_downgrades_one_step_at_a_time_keeping_the_rows(db_head, tmp_path):
+    """Down through 0005, 0004, 0003 and up again: the data survives each step, and the schema ends where it began."""
+    db = tmp_path / "steps.db"
+    shutil.copy(db_head, db)
+    before = (schema(db), constraints(db), rows(db, "SELECT id, amount_minor FROM expenses ORDER BY id"))
+
+    for revision in ("0004", "0003", "bdc30b15495a"):
+        alembic(db, "downgrade", revision)
+        assert rows(db, "SELECT id, amount_minor FROM expenses ORDER BY id") == before[2]
+    for revision in ("0003", "0004", "head"):
+        alembic(db, "upgrade", revision)
+
+    assert (schema(db), constraints(db), rows(db, "SELECT id, amount_minor FROM expenses ORDER BY id")) == before
+
+
+def test_0005_makes_the_money_columns_64_bit_and_keeps_every_amount(db_head, tmp_path):
+    def kinds(db: Path) -> dict[str, str]:
+        return {
+            table: next(kind for _, name, kind, *_ in rows(db, f"PRAGMA table_info({table})") if name == "amount_minor")
+            for table in ("expenses", "expense_shares", "settlements")
+        }
+
+    assert kinds(db_head) == {"expenses": "BIGINT", "expense_shares": "BIGINT", "settlements": "BIGINT"}
+    amounts = rows(db_head, "SELECT id, amount_minor FROM expenses ORDER BY id")
+
+    db = tmp_path / "copy.db"
+    shutil.copy(db_head, db)
+    alembic(db, "downgrade", "0004")
+    assert set(kinds(db).values()) == {"INTEGER"}
+    assert rows(db, "SELECT id, amount_minor FROM expenses ORDER BY id") == amounts
+    alembic(db, "upgrade", "head")
+    assert set(kinds(db).values()) == {"BIGINT"}
+    run_script(db, "UPDATE settlements SET amount_minor = 5000000000")  # past what 32 bits hold
+    assert rows(db, "SELECT DISTINCT amount_minor FROM settlements") == [(5_000_000_000,)]
+
+
+def test_0007_lets_a_deleted_account_have_no_phone_and_a_downgrade_gives_it_a_placeholder(db_head, tmp_path):
+    def phone_is_required(db: Path) -> bool:
+        return next(bool(notnull) for _, name, _, notnull, *_ in rows(db, "PRAGMA table_info(users)") if name == "phone")
+
+    assert phone_is_required(db_head) is False
+    assert "deleted_at" in [name for _, name, *_ in rows(db_head, "PRAGMA table_info(users)")]
+
+    db = tmp_path / "deleted.db"
+    shutil.copy(db_head, db)
+    users = rows(db, "SELECT username, phone FROM users ORDER BY username")
+    run_script(db, "INSERT INTO users (username, name, phone, password_hash, currency, notifications_on, created_at, deleted_at) "
+                   "SELECT 'gone.a', 'Deleted user', NULL, password_hash, currency, 0, created_at, created_at FROM users LIMIT 1")
+    run_script(db, "INSERT INTO users (username, name, phone, password_hash, currency, notifications_on, created_at, deleted_at) "
+                   "SELECT 'gone.b', 'Deleted user', NULL, password_hash, currency, 0, created_at, created_at FROM users LIMIT 1")  # two with no phone: fine
+
+    alembic(db, "downgrade", "0006")
+    assert phone_is_required(db) is True
+    after = dict(rows(db, "SELECT username, phone FROM users"))
+    assert {after["gone.a"], after["gone.b"]} == {"deleted:1", "deleted:2"}  # each got its own placeholder
+    assert [(u, after[u]) for u, _ in users] == users  # everyone else keeps the phone they had
+
+    alembic(db, "upgrade", "head")
+    assert len(rows(db, "SELECT username FROM users")) == len(users) + 2

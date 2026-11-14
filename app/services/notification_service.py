@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.notification import Notification, NotificationType
 from app.schemas.notification import NotificationList, NotificationOut
+from app.services import push_service
 from app.utils.errors import api_error
 
 DEFAULT_PAGE_SIZE = 20
@@ -25,7 +26,7 @@ def create_notification(
     """Add a card for `username` to the session. Does NOT commit.
 
     The caller commits, so the card is saved or dropped together with whatever caused it
-    (for example, creating a space and the "you were added" cards are one transaction).
+    (for example, creating a space and the "you were added" cards are one transaction), and so are its queued pushes.
     """
     notification = Notification(
         username=username,
@@ -37,6 +38,7 @@ def create_notification(
         needs_answer=needs_answer,
     )
     db.add(notification)
+    push_service.enqueue(db, notification)  # the push is queued with the card; reminders come through here too (task 1.8.4)
     return notification
 
 

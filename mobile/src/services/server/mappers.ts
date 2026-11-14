@@ -7,6 +7,7 @@ import {
   type OverallLine,
   type Pair,
   type ShareResponse,
+  type Settlement,
   type SettlementStatus,
   type Space,
   type SpaceBalance,
@@ -76,6 +77,24 @@ export type NotificationDto = {
 };
 export type NotificationListDto = { items: NotificationDto[]; next_before: number | null; unread_count: number };
 export type SearchResultDto = PersonDto & { is_friend: boolean };
+export type SpaceHeaderDto = { id: number; name: string; icon: string; currency: string; owner_username: string; created_at: string };
+export type SettlementDetailDto = {
+  id: number;
+  space: SpaceHeaderDto;
+  from_user: PersonDto;
+  to_user: PersonDto;
+  amount_minor: number;
+  status: SettlementStatus;
+  created_at: string;
+  answered_at: string | null;
+};
+export type PayeeDto = { user: PersonDto; owed_minor: number; max_minor: number };
+
+/** A row of GET /transactions: the Space page's expense or payment row, with the space it belongs to. */
+export type TransactionSpaceDto = { space_id: number; space_name: string; currency: string };
+export type TransactionDto = ((ExpenseRowDto & { kind: 'expense' }) | (SettlementRowDto & { kind: 'payment' })) & TransactionSpaceDto;
+/** `next_before` is an opaque marker for the next page, null on the last one. */
+export type TransactionListDto = { items: TransactionDto[]; next_before: string | null };
 
 // ---- small conversions ----
 
@@ -148,6 +167,33 @@ export const toOverall = (l: OverallDto): OverallLine => ({
 const myPart = (e: ExpenseRowDto, me: string): number | null =>
   e.paid_by.username === me ? e.amount_minor - (e.my_share_minor ?? 0) : e.my_share_minor === null ? null : 0 - e.my_share_minor; // 0 − x: never −0
 
+/** One expense as a row of the Space page or the Transactions page. The day is that day on this device. */
+export const expenseActivity = (e: ExpenseRowDto, me: string): ActivityRow => ({
+  kind: 'expense',
+  id: String(e.id),
+  description: e.description,
+  date: dayMs(e.date),
+  amountMinor: e.amount_minor,
+  paidById: e.paid_by.username,
+  paidByName: e.paid_by.name,
+  myPartMinor: myPart(e, me),
+  myResponse: e.my_share_status,
+  disputed: e.disputed,
+});
+
+/** One payment as a row of the Space page or the Transactions page. */
+export const paymentActivity = (s: SettlementRowDto): ActivityRow => ({
+  kind: 'payment',
+  id: String(s.id),
+  date: ms(s.created_at),
+  fromId: s.from_user.username,
+  fromName: s.from_user.name,
+  toId: s.to_user.username,
+  toName: s.to_user.name,
+  amountMinor: s.amount_minor,
+  status: s.status,
+});
+
 export function toSpaceDetail(d: SpaceDetailDto, me: User) {
   const id = String(d.id);
   const space: Space = {
@@ -183,33 +229,8 @@ export function toSpaceDetail(d: SpaceDetailDto, me: User) {
     settled: open.length === 0,
   };
 
-  const expenses = d.expenses.map(
-    (e): ActivityRow => ({
-      kind: 'expense',
-      id: String(e.id),
-      description: e.description,
-      date: dayMs(e.date),
-      amountMinor: e.amount_minor,
-      paidById: e.paid_by.username,
-      paidByName: e.paid_by.name,
-      myPartMinor: myPart(e, me.username),
-      myResponse: e.my_share_status,
-      disputed: e.disputed,
-    }),
-  );
-  const payments = d.settlements.map(
-    (s): ActivityRow => ({
-      kind: 'payment',
-      id: String(s.id),
-      date: ms(s.created_at),
-      fromId: s.from_user.username,
-      fromName: s.from_user.name,
-      toId: s.to_user.username,
-      toName: s.to_user.name,
-      amountMinor: s.amount_minor,
-      status: s.status,
-    }),
-  );
+  const expenses = d.expenses.map((e) => expenseActivity(e, me.username));
+  const payments = d.settlements.map(paymentActivity);
   // Newest first; the sort is stable, so rows of the same day keep the server's order (newest id first).
   const activity = [...expenses, ...payments].sort((a, b) => b.date - a.date);
   // Every pair in the space, the viewer's or not: who still owes or is owed anyone.
@@ -232,4 +253,42 @@ export const toNotification = (n: NotificationDto, userId: string): AppNotificat
   needsAnswer: n.needs_answer,
   read: n.read,
   createdAt: ms(n.created_at),
+});
+
+// ---- Settle up ----
+
+export const toPayee = (p: PayeeDto) => ({ user: toUser(p.user), owedMinor: p.owed_minor, maxMinor: p.max_minor });
+
+/** The payment screen. The space comes as a header only (no member list), like a Home card, so `memberIds` is empty. */
+export function toSettlementDetail(d: SettlementDetailDto) {
+  const space: Space = {
+    id: String(d.space.id),
+    name: d.space.name,
+    icon: icon(d.space.icon),
+    currency: d.space.currency as Currency,
+    ownerId: d.space.owner_username,
+    memberIds: [],
+    serial: d.space.id,
+    createdAt: ms(d.space.created_at),
+  };
+  const settlement: Settlement = {
+    id: String(d.id),
+    spaceId: space.id,
+    fromUserId: d.from_user.username,
+    toUserId: d.to_user.username,
+    amountMinor: d.amount_minor,
+    date: ms(d.created_at),
+    status: d.status,
+    answeredAt: d.answered_at === null ? null : ms(d.answered_at),
+  };
+  return { settlement, space, from: toUser(d.from_user), to: toUser(d.to_user) };
+}
+
+// ---- Transactions ----
+
+export const toTransaction = (t: TransactionDto, me: User): ActivityRow & { spaceId: string; spaceName: string; currency: Currency } => ({
+  ...(t.kind === 'expense' ? expenseActivity(t, me.username) : paymentActivity(t)),
+  spaceId: String(t.space_id),
+  spaceName: t.space_name,
+  currency: t.currency as Currency,
 });

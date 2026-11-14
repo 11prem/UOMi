@@ -26,6 +26,10 @@ const SAME_NAME = new Set<string>([
 const RENAMED: Record<string, AppErrorCode> = {
   space_not_found: 'not_found',
   notification_not_found: 'not_found',
+  expense_not_found: 'not_found',
+  settlement_not_found: 'not_found',
+  person_not_found: 'not_found',
+  member_not_found: 'not_found',
   unknown_usernames: 'validation_error', // the list stays in `extra.usernames`
 };
 

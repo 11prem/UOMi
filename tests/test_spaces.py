@@ -72,16 +72,37 @@ def test_usernames_are_cleaned_up_before_use(client, users):
     assert len(cards) == 1
 
 
-def test_a_space_can_start_with_just_the_creator(client, users):
-    space = create_space(client, users["alice"], "Solo")
-    assert [m["username"] for m in space["members"]] == ["alice"]
+def test_a_new_space_needs_one_other_person(client, users):
+    """Decision 1.2.7: a space is for splitting with somebody. Nobody else, or only the creator's own name in any case, is refused."""
+    for usernames in ([], ["alice"], ["ALICE", "alice"], ["  "]):
+        response = client.post("/spaces", json={"name": "Solo", "icon": "trip", "usernames": usernames}, headers=auth(users["alice"]))
+        assert response.status_code == 422, usernames
+        assert error_code(response) == "validation_error"
+        assert [f["field"] for f in response.json()["detail"]["fields"]] == ["usernames"]
+    assert client.get("/spaces", headers=auth(users["alice"])).json()["spaces"] == []  # nothing was saved
+
+
+def test_the_creator_listed_with_someone_else_is_fine(client, users):
+    space = create_space(client, users["alice"], "Pair", ["alice", "bob"])
+    assert [m["username"] for m in space["members"]] == ["alice", "bob"]
+
+
+def test_a_space_that_lost_everyone_else_still_exists_and_can_take_people_again(client, users):
+    """The rule is about creating one. Once the others leave, the owner keeps a working space and can add people back."""
+    space = create_space(client, users["alice"], "Pair", ["bob"])
+    assert client.post(f"/spaces/{space['id']}/leave", headers=auth(users["bob"])).status_code in (200, 204)
+
+    page = get_space(client, users["alice"], space["id"])
+    assert page.status_code == 200 and [m["username"] for m in page.json()["members"]] == ["alice"]
+    added = client.post(f"/spaces/{space['id']}/members", json={"usernames": ["bob"]}, headers=auth(users["alice"]))
+    assert added.status_code == 200
 
 
 def test_create_space_rejects_bad_input(client, users):
     headers = auth(users["alice"])
     bad_payloads = [
-        {"name": "   ", "icon": "trip", "usernames": []},
-        {"name": "Trip", "icon": "Bad Icon!", "usernames": []},
+        {"name": "   ", "icon": "trip", "usernames": ["bob"]},
+        {"name": "Trip", "icon": "Bad Icon!", "usernames": ["bob"]},
         {"name": "Trip", "icon": "trip", "usernames": ["not valid!"]},
         {"name": "Trip", "icon": "trip", "usernames": [f"user{i:03d}" for i in range(50)]},
     ]
@@ -185,3 +206,17 @@ def test_overpaying_flips_who_owes_whom(client, users):
     add_settlement(space["id"], "bob", "alice", "80", SettlementStatus.CONFIRMED)
 
     assert owes(get_space(client, users["alice"], space["id"]).json()) == [("alice", "bob", 3000)]
+
+
+def test_a_member_who_left_is_still_named_on_the_old_records(client, users):
+    """Their old expense and their payments read by name, not by username, after they are no longer in the space."""
+    space = create_space(client, users["alice"], "Flat", ["bob"])
+    add_expense(space["id"], "bob", "Gas", {"alice": ("30", ShareStatus.ACCEPTED), "bob": ("30", ShareStatus.ACCEPTED)})
+    add_settlement(space["id"], "alice", "bob", "30", SettlementStatus.CONFIRMED)
+    assert client.post(f"/spaces/{space['id']}/leave", headers=auth(users["bob"])).status_code == 204
+
+    page = get_space(client, users["alice"], space["id"]).json()
+
+    assert [m["username"] for m in page["members"]] == ["alice"]
+    assert next(e for e in page["expenses"] if e["description"] == "Gas")["paid_by"] == {"username": "bob", "name": "Bob"}
+    assert page["settlements"][0]["to_user"] == {"username": "bob", "name": "Bob"}
