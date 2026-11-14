@@ -89,5 +89,5 @@ from that (for example `npx openapi-typescript docs/openapi.json -o mobile/src/s
 | POST | `/users/me/delete` | yes | DeleteAccountRequest | - | 204 | Profile, Delete my account: asks for the password again. Refused (403) until the person is settled up in every |
 | PUT | `/users/me/devices` | yes | DeviceIn | - | 204 | Save this phone's push token (call it on every launch). The phone belongs to this sign-in and goes when it does. |
 | DELETE | `/users/me/devices` | yes | DeviceRemove | - | 204 | Forget this phone's push token (sign-out). Always 204, even for a token the server never had. |
-| GET | `/users/me/export` | yes | - | - | 200 AccountExport | Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications. |
+| POST | `/users/me/export` | yes | ExportRequest | - | 200 AccountExport | Export my data: a JSON file of the profile, the spaces with their members, every expense with its shares, every payment, and the notifications. |
 | GET | `/users/search` | yes | - | q | 200 list[UserSearchResult] | Add People page, live search: the app sends one request per pause in typing (300 ms). |

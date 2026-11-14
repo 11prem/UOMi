@@ -16,8 +16,8 @@ def users(client):
     return {name: register(client, name) for name in ("alice", "bob", "carol")}
 
 
-def export(client, tokens):
-    return client.get("/users/me/export", headers=auth(tokens))
+def export(client, tokens, password=PASSWORD):
+    return client.post("/users/me/export", json={"password": password}, headers=auth(tokens))
 
 
 @pytest.fixture
@@ -142,9 +142,30 @@ def test_someone_whose_account_was_deleted_is_named_as_such(client, users):
 
 
 def test_you_must_be_signed_in(client):
-    response = client.get("/users/me/export")
+    response = client.post("/users/me/export", json={"password": PASSWORD})
 
     assert response.status_code == 401 and error_code(response) == "not_authenticated"
+
+
+def test_a_wrong_password_gets_nothing(client, users, flat):
+    # A stolen access token alone must not be enough to download the phone number and the whole ledger.
+    response = export(client, users["alice"], password="not-the-password-1")
+
+    assert response.status_code == 403 and error_code(response) == "forbidden"
+    assert response.json()["detail"]["reason"] == "wrong_password"
+    assert "Flat" not in response.text and "+91" not in response.text
+
+
+def test_no_password_at_all_is_refused_and_the_old_get_is_gone(client, users, flat):
+    assert client.post("/users/me/export", json={}, headers=auth(users["alice"])).status_code == 422
+    assert client.get("/users/me/export", headers=auth(users["alice"])).status_code == 405
+
+
+def test_guessing_the_password_through_the_export_locks_like_signing_in(client, users, flat):
+    codes = [export(client, users["alice"], password="wrong-guess-9").status_code for _ in range(settings.LOGIN_MAX_ATTEMPTS + 1)]
+
+    assert codes[:-1] == [403] * settings.LOGIN_MAX_ATTEMPTS and codes[-1] == 429
+    assert export(client, users["alice"]).status_code == 429  # even the right password waits out the lock
 
 
 def test_exports_are_limited_per_person_per_hour(client, users, flat, monkeypatch):

@@ -116,6 +116,20 @@ def test_the_made_up_number_for_an_unknown_username_is_always_the_same(client, a
     assert other != first
 
 
+def test_made_up_numbers_follow_the_countries_of_the_real_accounts(client, alice):
+    # If every made-up number were +91, any other prefix in a reply would prove the username exists.
+    register(client, "dave", phone="+16502530000")
+    from app.services import otp_service
+
+    with SessionLocal() as session:
+        shown = [otp_service.fake_masked_phone(session, f"ghost{i}") for i in range(60)]
+
+    prefixes = {number.split(" ")[0] for number in shown}
+    assert prefixes == {"+1", "+91"}  # both real countries appear, and no other
+    for number in shown:
+        assert re.fullmatch(r"\+(91 \d\d\*{6}\d\d|1 \d\d\*{6}\d\d)", number), number  # the same shapes as real ones
+
+
 def test_the_username_can_be_typed_in_any_case_with_spaces(client, alice, sms_outbox):
     assert forgot(client, "  ALICE ").status_code == 202
     assert len(sms_outbox) == 1
