@@ -6,9 +6,9 @@ UOMi is a shared-expense app for small groups. Friends, flatmates or a travellin
 
 This repository holds the whole product: the Android app, the FastAPI backend, and the design and specification documents that both were built from.
 
-> **Status: v0.1.0, a test build.** The app is complete in *demo mode*. Against the real backend, sign-in, Home, Create Space, the Space page, Notifications and the Transactions list work today. The server now has expense and settle-up endpoints too, but the app's screens for them still show "Not available on this server yet" in server mode. See [Project status](#project-status).
+> **Status: v0.2.0, a test build.** The app is complete in *demo mode*. Against the real backend, sign-in, Home, Create Space, the Space page, Notifications and the Transactions list work today. The server now has expense and settle-up endpoints too, but the app's screens for them still show "Not available on this server yet" in server mode. See [Project status](#project-status).
 
-**Quick start:** download `UOMi-0.1.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases), install it on an Android phone, and sign in as `kabir.r` / `demo1234`. No server is needed.
+**Quick start:** download `UOMi-0.2.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases), install it on an Android phone, and sign in as `kabir.r` / `demo1234`. No server is needed.
 
 ## Contents
 
@@ -57,7 +57,7 @@ Switching modes signs you out and clears cached data, so the two never mix.
 
 ### 1. On an Android phone (demo mode)
 
-1. Download `UOMi-0.1.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases) and copy it to the phone (Android 7.0 or later).
+1. Download `UOMi-0.2.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases) and copy it to the phone (Android 7.0 or later).
 2. Open it and allow "install unknown apps" when asked.
 3. Sign in as `kabir.r` with the password `demo1234`.
 
