@@ -31,12 +31,12 @@ from app.services import auth_service, otp_service, session_service, user_servic
 from app.utils import security
 from app.utils.log_redaction import RedactQueryFilter, install_access_log_redaction, redact
 from app.utils.middleware import SafeErrorsMiddleware
-from tests.helpers import PHONES, auth, db_all, error_code, register, register_payload
+from tests.helpers import EMAILS, auth, db_all, error_code, register, register_payload
 
 GOOD_SECRET = "0123456789abcdef" * 4  # obviously fake: a test fixture, not a key
 GOOD_OTP_KEY = "fedcba9876543210" * 4  # obviously fake: a test fixture, not a key
 ORIGIN = "http://localhost:8081"
-PHONE = "+919876543210"
+EMAIL = "alice@example.com"
 
 
 # --- Settings: production checks (2.3), CORS (2.10), bcrypt floor and key rules (2.7) ---------------
@@ -46,7 +46,9 @@ def production_settings(**overrides) -> Settings:
     values = dict(
         ENVIRONMENT="production",
         DEBUG=False,
-        SMS_BACKEND="a-real-provider",
+        EMAIL_BACKEND="smtp",
+        SMTP_HOST="smtp.uomi.test",
+        SMTP_FROM="UOMi <no-reply@uomi.test>",
         PUSH_BACKEND="fcm",
         FIREBASE_PROJECT_ID="demo-project",
         FIREBASE_CREDENTIALS_FILE="firebase.json",
@@ -69,7 +71,10 @@ def test_safe_production_settings_have_no_problems():
     ("overrides", "fragment"),
     [
         ({"DEBUG": True}, "DEBUG"),
-        ({"SMS_BACKEND": "console"}, "SMS_BACKEND"),
+        ({"EMAIL_BACKEND": "console"}, "EMAIL_BACKEND"),
+        ({"EMAIL_BACKEND": "carrier-pigeon"}, "EMAIL_BACKEND is 'carrier-pigeon'"),
+        ({"SMTP_HOST": ""}, "SMTP_HOST or SMTP_FROM"),
+        ({"SMTP_FROM": ""}, "SMTP_HOST or SMTP_FROM"),
         ({"SECRET_KEY": "test-secret-key-0123456789-0123456789"}, "SECRET_KEY looks like a placeholder"),
         ({"SECRET_KEY": "a" * 40}, "SECRET_KEY uses too few different characters"),
         ({"OTP_HMAC_KEY": ""}, "OTP_HMAC_KEY is not set"),
@@ -89,19 +94,19 @@ def test_exact_https_origins_are_allowed_in_production():
 
 
 def test_refusing_to_start_lists_every_problem_at_once():
-    unsafe = production_settings(DEBUG=True, SMS_BACKEND="console", OTP_HMAC_KEY="")
+    unsafe = production_settings(DEBUG=True, EMAIL_BACKEND="console", OTP_HMAC_KEY="")
     with pytest.raises(RuntimeError) as caught:
         check_production_settings(unsafe)
     message = str(caught.value)
     assert message.startswith("Refusing to start with ENVIRONMENT=production")
-    assert "DEBUG" in message and "SMS_BACKEND" in message and "OTP_HMAC_KEY" in message
+    assert "DEBUG" in message and "EMAIL_BACKEND" in message and "OTP_HMAC_KEY" in message
 
 
 def test_other_environments_are_never_refused():
     relaxed = Settings(
-        _env_file=None, ENVIRONMENT="development", DEBUG=True, SMS_BACKEND="console", BCRYPT_ROUNDS=12
+        _env_file=None, ENVIRONMENT="development", DEBUG=True, EMAIL_BACKEND="console", BCRYPT_ROUNDS=12
     )
-    check_production_settings(relaxed)  # development may use the console SMS backend and debug mode
+    check_production_settings(relaxed)  # development may use the console email backend and debug mode
 
 
 def test_cors_origins_default_to_nothing_in_production(monkeypatch):
@@ -130,7 +135,9 @@ def use_production_settings(monkeypatch) -> None:
     for name, value in dict(
         ENVIRONMENT="production",
         DEBUG=False,
-        SMS_BACKEND="a-real-provider",
+        EMAIL_BACKEND="smtp",
+        SMTP_HOST="smtp.uomi.test",
+        SMTP_FROM="UOMi <no-reply@uomi.test>",
         PUSH_BACKEND="fcm",
         FIREBASE_PROJECT_ID="demo-project",
         FIREBASE_CREDENTIALS_FILE="firebase.json",
@@ -142,7 +149,7 @@ def use_production_settings(monkeypatch) -> None:
 
 
 def test_the_api_will_not_start_in_production_with_unsafe_settings(monkeypatch):
-    monkeypatch.setattr(settings, "ENVIRONMENT", "production")  # the console SMS backend and the test key remain
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")  # the console email backend and the test key remain
     with pytest.raises(RuntimeError, match="Refusing to start"):
         create_app()
 
@@ -208,36 +215,36 @@ def test_forged_or_off_spec_tokens_are_refused(client):
         assert response.status_code == 401 and error_code(response) == "invalid_token", reason
 
 
-def test_the_texted_code_hash_uses_the_otp_key_not_the_signing_key(monkeypatch):
-    message = f"otp:{PHONE}:123456".encode()
+def test_the_emailed_code_hash_uses_the_otp_key_not_the_signing_key(monkeypatch):
+    message = f"otp:{EMAIL}:123456".encode()
     old_scheme = hmac.new(settings.SECRET_KEY.encode(), message, hashlib.sha256).hexdigest()
 
-    assert security.hash_otp(PHONE, "123456") != old_scheme  # even with no OTP key set, the key is separate
+    assert security.hash_otp(EMAIL, "123456") != old_scheme  # even with no OTP key set, the key is separate
 
     monkeypatch.setattr(settings, "OTP_HMAC_KEY", GOOD_OTP_KEY)
     expected = hmac.new(GOOD_OTP_KEY.encode(), message, hashlib.sha256).hexdigest()
-    assert security.hash_otp(PHONE, "123456") == expected != old_scheme
+    assert security.hash_otp(EMAIL, "123456") == expected != old_scheme
 
 
-def test_a_code_texted_under_one_otp_key_is_refused_under_another(client, sms_outbox, monkeypatch):
-    def texted_code() -> str:
-        return re.search(r"\b(\d{6})\b", sms_outbox[-1][1]).group(1)
+def test_a_code_emailed_under_one_otp_key_is_refused_under_another(client, email_outbox, monkeypatch):
+    def emailed_code() -> str:
+        return re.search(r"\b(\d{6})\b", email_outbox[-1][1]).group(1)
 
     register(client, "alice")
     register(client, "bob")
     monkeypatch.setattr(settings, "OTP_HMAC_KEY", GOOD_OTP_KEY)
     alices = client.post("/auth/forgot", json={"username": "alice"})
     assert alices.status_code == 202
-    alices_code = texted_code()
+    alices_code = emailed_code()
 
     monkeypatch.setattr(settings, "OTP_HMAC_KEY", "9" * 12 + GOOD_SECRET[:40])  # the key is rotated
     refused = client.post("/auth/verify-otp", json={"reset_id": alices.json()["reset_id"], "code": alices_code})
     assert refused.status_code == 400 and error_code(refused) == "invalid_code"
 
-    # control: a code texted under the new key is accepted, so the refusal above was about the key
+    # control: a code emailed under the new key is accepted, so the refusal above was about the key
     bobs = client.post("/auth/forgot", json={"username": "bob"})
     assert bobs.status_code == 202
-    accepted = client.post("/auth/verify-otp", json={"reset_id": bobs.json()["reset_id"], "code": texted_code()})
+    accepted = client.post("/auth/verify-otp", json={"reset_id": bobs.json()["reset_id"], "code": emailed_code()})
     assert accepted.status_code == 200
 
 
@@ -295,9 +302,9 @@ def file_engine(tmp_path):
     engine.dispose()
 
 
-def add_user(engine, username: str = "alice", phone: str = PHONE) -> None:
+def add_user(engine, username: str = "alice", email: str = EMAIL) -> None:
     with Session(engine) as db:
-        db.add(User(username=username, name=username.capitalize(), phone=phone, password_hash=security.hash_password("old-password-1")))
+        db.add(User(username=username, name=username.capitalize(), email=email, password_hash=security.hash_password("old-password-1")))
         db.commit()
 
 
@@ -349,7 +356,7 @@ def test_a_reset_token_cannot_be_used_twice_at_the_same_moment(file_engine):
     with Session(file_engine) as db:
         db.add(
             PasswordReset(
-                phone=PHONE,
+                email=EMAIL,
                 username="alice",
                 code_hash="0" * 64,
                 expires_at=now + timedelta(minutes=5),
@@ -432,10 +439,10 @@ def test_a_crash_is_logged_without_the_query_string(client, monkeypatch, caplog)
     monkeypatch.setattr(user_service, "search_users", boom)
     tokens = register(client, "alice")
     with caplog.at_level(logging.ERROR, logger="uomi.errors"):
-        response = client.get("/users/search", params={"q": "9876543211"}, headers=auth(tokens))
+        response = client.get("/users/search", params={"q": "bob@example.com"}, headers=auth(tokens))
     assert response.status_code == 500
     assert "Unhandled error on GET /users/search" in caplog.text
-    assert "9876543211" not in caplog.text  # the search term can be a phone number
+    assert "bob@example.com" not in caplog.text  # whatever was typed in the search box
 
 
 def test_responses_to_signed_in_requests_and_sign_in_are_never_cached(client):
@@ -478,8 +485,8 @@ def test_pydantic_settings_is_new_enough_for_nodecode():
 
 
 def test_search_terms_are_redacted_from_log_lines():
-    assert redact("GET /users/search?q=9876543210 HTTP/1.1") == "GET /users/search?q=[redacted] HTTP/1.1"
-    assert redact("/users/search?limit=5&q=%2B919876543210&x=1") == "/users/search?limit=5&q=[redacted]&x=1"
+    assert redact("GET /users/search?q=alice@example.com HTTP/1.1") == "GET /users/search?q=[redacted] HTTP/1.1"
+    assert redact("/users/search?limit=5&q=alice%40example.com&x=1") == "/users/search?limit=5&q=[redacted]&x=1"
     assert redact("/spaces/12?sort=new") == "/spaces/12?sort=new"
     assert redact("/x?email=a%40b.test&refresh_token=abc&limit=5") == "/x?email=[redacted]&refresh_token=[redacted]&limit=5"
 
@@ -491,21 +498,21 @@ def test_the_access_log_filter_rewrites_uvicorn_records():
         __file__,
         0,
         '%s - "%s %s HTTP/%s" %d',
-        ("10.0.0.1:5000", "GET", "/users/search?q=9876543210", "1.1", 200),
+        ("10.0.0.1:5000", "GET", "/users/search?q=alice@example.com", "1.1", 200),
         None,
     )
     assert RedactQueryFilter().filter(record) is True
-    assert "9876543210" not in record.getMessage()
+    assert "alice@example.com" not in record.getMessage()
     assert "q=[redacted]" in record.getMessage()
     assert record.args[-1] == 200  # non-text arguments are left alone
 
 
 def test_the_access_log_filter_also_handles_gunicorns_named_arguments():
     """Under gunicorn (with uvicorn workers) gunicorn writes the access line, with %(r)s-style named atoms."""
-    atoms = {"h": "10.0.0.1", "r": "GET /users/search?q=9876543210 HTTP/1.1", "s": 200}
+    atoms = {"h": "10.0.0.1", "r": "GET /users/search?q=alice@example.com HTTP/1.1", "s": 200}
     record = logging.LogRecord("gunicorn.access", logging.INFO, __file__, 0, '%(h)s "%(r)s" %(s)s', (atoms,), None)
     assert RedactQueryFilter().filter(record) is True
-    assert "9876543210" not in record.getMessage()
+    assert "alice@example.com" not in record.getMessage()
     assert "q=[redacted]" in record.getMessage()
 
 
@@ -537,28 +544,28 @@ def test_a_client_disconnect_is_not_turned_into_a_500_or_logged_as_an_error(capl
     assert caplog.text == ""  # and it is not a server error
 
 
-def test_the_code_text_is_scheduled_after_the_reply_not_sent_during_it(client, sms_outbox):
-    """A real SMS send takes hundreds of milliseconds. Sent inline, it would make the reply slower for registered
-    numbers only, which tells an attacker who has an account."""
+def test_the_code_email_is_scheduled_after_the_reply_not_sent_during_it(client, email_outbox):
+    """A real mail server takes hundreds of milliseconds. Sent inline, it would make the reply slower for registered
+    usernames only, which tells an attacker who has an account."""
     register(client, "alice")
-    sms_outbox.clear()  # the sign-up code
+    email_outbox.clear()  # the sign-up code
     registered, unknown, signing_up = BackgroundTasks(), BackgroundTasks(), BackgroundTasks()
     with SessionLocal() as db:
         auth_service.request_password_reset(db, "alice", registered)
         auth_service.request_password_reset(db, "nobody", unknown)
-        auth_service.start_signup(db, RegisterRequest(**register_payload(username="bob", phone=PHONES["bob"])), signing_up)
-    assert sms_outbox == []  # nothing was sent while the replies were being prepared
+        auth_service.start_signup(db, RegisterRequest(**register_payload(username="bob", email=EMAILS["bob"])), signing_up)
+    assert email_outbox == []  # nothing was sent while the replies were being prepared
     assert len(registered.tasks) == 1 and unknown.tasks == [] and len(signing_up.tasks) == 1
     asyncio.run(registered())
     asyncio.run(signing_up())
-    assert [phone for phone, _ in sms_outbox] == [PHONE, "+919876543211"]  # alice's reset code, bob's sign-up code
+    assert [to for to, _ in email_outbox] == [EMAIL, "bob@example.com"]  # alice's reset code, bob's sign-up code
 
 
-def test_a_failing_text_send_is_logged_and_never_raised(monkeypatch, caplog):
-    def broken(phone, message):
-        raise RuntimeError("provider down")
+def test_a_failing_email_send_is_logged_and_never_raised(monkeypatch, caplog):
+    def broken(to, subject, body):
+        raise RuntimeError("mail server down")
 
-    monkeypatch.setattr("app.services.sms_service.send_sms", broken)
+    monkeypatch.setattr("app.services.email_service.send_email", broken)
     with caplog.at_level(logging.ERROR, logger="app.services.otp_service"):
-        otp_service.send_code_text(PHONE, "123456")  # does not raise
-    assert "Could not send the one-time code text" in caplog.text
+        otp_service.send_code_email(EMAIL, "123456")  # does not raise
+    assert "Could not send the one-time code email" in caplog.text

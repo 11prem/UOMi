@@ -11,15 +11,15 @@ from that (for example `npx openapi-typescript docs/openapi.json -o mobile/src/s
 
 | Method | Path | Signed in | Body | Query | Success | What it does |
 |---|---|---|---|---|---|---|
-| GET | `/auth/check-phone` | no | - | phone | 200 AvailabilityOut | Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address. |
+| GET | `/auth/check-email` | no | - | email | 200 AvailabilityOut | Is this email free? Tells anyone whether an address has an account, so it has a tight limit per address. |
 | GET | `/auth/check-username` | no | - | username | 200 AvailabilityOut | The live "✓ available / ✗ taken" under the username field on Create Account. |
-| POST | `/auth/forgot` | no | ForgotRequest | - | 202 ForgotResponse | Forgot Password: a username -> a code is texted to its phone, and the masked number comes back. |
+| POST | `/auth/forgot` | no | ForgotRequest | - | 202 ForgotResponse | Forgot Password: a username -> a code is emailed to its address, and the masked email comes back. |
 | POST | `/auth/login` | no | LoginRequest | - | 200 TokenPair | Sign In -> Home Page. Same error for a wrong username or password; 429 after too many tries. |
 | POST | `/auth/logout` | yes | - | - | 204 | Profile > Logout -> back to the Login Page. Ends this device's session. |
 | POST | `/auth/otp/resend` | no | ResendRequest | - | 200 ResendOut | "Resend code" on either code screen: send `pending_id` (sign-up) or `reset_id` (forgot password). |
 | POST | `/auth/refresh` | no | RefreshRequest | - | 200 TokenPair | Trade a refresh token for new tokens. Fails with `session_expired` if the user was idle too long. |
-| POST | `/auth/register` | no | RegisterRequest | - | 202 SignupStarted | Create Account -> Verify phone. Texts a code; the account does NOT exist until `/auth/register/verify`. |
-| POST | `/auth/register/verify` | no | VerifySignupRequest | - | 201 TokenPair | Verify phone -> Home Page. The right code creates the account and signs the new user straight in. |
+| POST | `/auth/register` | no | RegisterRequest | - | 202 SignupStarted | Create Account -> Verify email. Emails a code; the account does NOT exist until `/auth/register/verify`. |
+| POST | `/auth/register/verify` | no | VerifySignupRequest | - | 201 TokenPair | Verify email -> Home Page. The right code creates the account and signs the new user straight in. |
 | POST | `/auth/reset` | no | ResetRequest | - | 200 ResetOut | Set new password -> then sign in again (Login Page, with `username` filled in). |
 | POST | `/auth/verify-otp` | no | VerifyOTPRequest | - | 200 VerifyOTPResponse | Enter the code: right code -> reset token for the Set new password screen. |
 
@@ -84,7 +84,7 @@ from that (for example `npx openapi-typescript docs/openapi.json -o mobile/src/s
 
 | Method | Path | Signed in | Body | Query | Success | What it does |
 |---|---|---|---|---|---|---|
-| GET | `/users/me` | yes | - | - | 200 UserMe | Who am I: the username, name, phone, default currency and notifications switch of the signed-in user. |
+| GET | `/users/me` | yes | - | - | 200 UserMe | Who am I: the username, name, email, default currency and notifications switch of the signed-in user. |
 | PATCH | `/users/me` | yes | UserUpdate | - | 200 UserMe | Profile, Edit and the preferences: the name, the default currency and the notifications switch. |
 | POST | `/users/me/delete` | yes | DeleteAccountRequest | - | 204 | Profile, Delete my account: asks for the password again. Refused (403) until the person is settled up in every |
 | PUT | `/users/me/devices` | yes | DeviceIn | - | 204 | Save this phone's push token (call it on every launch). The phone belongs to this sign-in and goes when it does. |

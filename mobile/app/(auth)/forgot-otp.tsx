@@ -3,16 +3,16 @@ import { OtpStep } from '../../src/features/auth/OtpStep';
 import { resetToken } from '../../src/features/auth/resetToken';
 import { useServices } from '../../src/services/useServices';
 
-/** Forgot password, step 2 (specs § 4.5b): the code sent to the registered phone. The right one opens New password. */
+/** Forgot password, step 2 (specs § 4.5b): the code sent to the registered email. The right one opens New password. */
 export default function ForgotOtp() {
   const services = useServices();
-  const { resetId, maskedPhone } = useLocalSearchParams<{ resetId?: string; maskedPhone?: string }>();
-  if (!resetId || !maskedPhone) return <Redirect href="/forgot" />;
+  const { resetId, maskedEmail } = useLocalSearchParams<{ resetId?: string; maskedEmail?: string }>();
+  if (!resetId || !maskedEmail) return <Redirect href="/forgot" />;
 
   return (
     <OtpStep
       title="Enter the code"
-      masked={maskedPhone}
+      masked={maskedEmail}
       resendRef={resetId}
       verify={async (code) => {
         resetToken.set((await services.auth.verifyResetOtp(resetId, code)).resetToken);

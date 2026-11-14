@@ -116,7 +116,7 @@ def generate_otp(length: int | None = None) -> str:
 
 
 def _otp_hmac_key() -> bytes:
-    """The key for the texted codes: OTP_HMAC_KEY, which is separate from the token-signing SECRET_KEY.
+    """The key for the emailed codes: OTP_HMAC_KEY, which is separate from the token-signing SECRET_KEY.
 
     Left empty (development), a key is derived from SECRET_KEY for this one purpose, so the two uses
     still never share a key. Production requires OTP_HMAC_KEY to be set (see config.production_problems).
@@ -126,14 +126,14 @@ def _otp_hmac_key() -> bytes:
     return hmac.new(settings.SECRET_KEY.encode("utf-8"), b"uomi:otp-hmac-key:v1", hashlib.sha256).digest()
 
 
-def hash_otp(phone: str, code: str) -> str:
-    """HMAC of the code, bound to the phone number. The plain code is never stored."""
-    message = f"otp:{phone}:{code}".encode("utf-8")
+def hash_otp(email: str, code: str) -> str:
+    """HMAC of the code, bound to the email address. The plain code is never stored."""
+    message = f"otp:{email}:{code}".encode("utf-8")
     return hmac.new(_otp_hmac_key(), message, hashlib.sha256).hexdigest()
 
 
 def keyed_digest(purpose: str, value: str) -> bytes:
-    """A stable pseudo-random value derived from `value` under the OTP key (for a made-up masked phone number).
+    """A stable pseudo-random value derived from `value` under the OTP key (for a made-up masked email).
 
     The same input always gives the same output, and nobody without the key can predict it or reverse it.
     """

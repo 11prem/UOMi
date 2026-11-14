@@ -14,18 +14,18 @@ const RESEND_SECONDS = 30; // specs § 3.4; the server's reply to a resend sets 
 
 type Props = {
   title: string;
-  /** The number, already masked: "+91 80******31". */
+  /** The email address, already masked: "ka*****@example.com". */
   masked: string;
   /** `pendingId` (sign up) or `resetId` (forgot password): what `resendOtp` is called with. */
   resendRef: string;
   /** Checks the code. Rejects with an `AppError` for a wrong, expired or locked code; resolving means the screen is done. */
   verify: (code: string) => Promise<void>;
-  /** Shows "Wrong number? Edit" (sign up only). */
+  /** Shows "Wrong email? Edit" (sign up only). */
   onEdit?: () => void;
 };
 
 /**
- * The shared OTP screen of Verify phone and Forgot password (specs § 3.4): six boxes, a message line, Resend code on a
+ * The shared OTP screen of Verify email and Forgot password (specs § 3.4): six boxes, a message line, Resend code on a
  * 30 s countdown. The code is checked as soon as the sixth digit is in; a wrong one clears the boxes, shakes them and
  * puts the caret back on the first.
  */
@@ -112,7 +112,7 @@ export function OtpStep({ title, masked, resendRef, verify, onEdit }: Props) {
             disabled={left > 0 || sending}
             onPress={resend}
           />
-          {onEdit && <Button variant="text" label="Wrong number? Edit" onPress={onEdit} />}
+          {onEdit && <Button variant="text" label="Wrong email? Edit" onPress={onEdit} />}
         </View>
         {services.mode === 'demo' && (
           <DemoHint>

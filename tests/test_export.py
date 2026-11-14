@@ -8,7 +8,7 @@ from app.config import settings
 from app.models.expense_split import ShareStatus
 from app.models.payment import SettlementStatus
 from app.schemas.export import AccountExport
-from tests.helpers import PASSWORD, PHONES, add_expense, add_settlement, auth, create_space, error_code, register
+from tests.helpers import PASSWORD, EMAILS, add_expense, add_settlement, auth, create_space, error_code, register
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def test_the_export_holds_the_profile_the_spaces_and_the_cards(client, users, fl
     body = response.json()
     assert set(body) == {"exported_at", "profile", "spaces", "expenses", "settlements", "notifications"}
     assert body["profile"] == {
-        "username": "alice", "name": "Alice", "phone": "+919876543210", "currency": "INR",
+        "username": "alice", "name": "Alice", "email": "alice@example.com", "currency": "INR",
         "notifications_on": True, "created_at": body["profile"]["created_at"],
     }
     [space] = body["spaces"]
@@ -108,12 +108,12 @@ def test_a_space_the_person_has_left_is_gone_from_it(client, users, flat):
     assert [s["name"] for s in export(client, users["alice"]).json()["spaces"]] == ["Flat"]
 
 
-def test_nobody_elses_phone_number_password_or_token_is_in_it(client, users, flat):
+def test_nobody_elses_email_password_or_token_is_in_it(client, users, flat):
     text = export(client, users["alice"]).text
 
-    assert PHONES["alice"] in text or "+919876543210" in text  # her own number is
+    assert EMAILS["alice"] in text  # her own address is
     for other in ("bob", "carol"):
-        assert PHONES[other] not in text and "+91" + PHONES[other] not in text
+        assert EMAILS[other] not in text
     for forbidden_word in ("password", "token", "hash", PASSWORD):
         assert forbidden_word not in text.lower()
 
@@ -134,7 +134,7 @@ def test_someone_whose_account_was_deleted_is_named_as_such(client, users):
     body = export(client, users["alice"]).json()
 
     assert body["expenses"][0]["paid_by"] == {"username": "bob", "name": "Deleted user"}
-    assert "Bob" not in json.dumps(body["expenses"]) and PHONES["bob"] not in json.dumps(body)
+    assert "Bob" not in json.dumps(body["expenses"]) and EMAILS["bob"] not in json.dumps(body)
     assert [m["name"] for m in body["spaces"][0]["members"]] == ["Alice"]  # bob left every space when he deleted the account
 
 
@@ -148,12 +148,12 @@ def test_you_must_be_signed_in(client):
 
 
 def test_a_wrong_password_gets_nothing(client, users, flat):
-    # A stolen access token alone must not be enough to download the phone number and the whole ledger.
+    # A stolen access token alone must not be enough to download the email address and the whole ledger.
     response = export(client, users["alice"], password="not-the-password-1")
 
     assert response.status_code == 403 and error_code(response) == "forbidden"
     assert response.json()["detail"]["reason"] == "wrong_password"
-    assert "Flat" not in response.text and "+91" not in response.text
+    assert "Flat" not in response.text and "@example.com" not in response.text
 
 
 def test_no_password_at_all_is_refused_and_the_old_get_is_gone(client, users, flat):

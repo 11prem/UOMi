@@ -17,13 +17,13 @@ ACCEPTED = ShareStatus.ACCEPTED
 PENDING = ShareStatus.PENDING
 REJECTED = ShareStatus.REJECTED
 
-EXTRA_PHONES = {"swetha": "9876543220", "arun": "9876543221"}
+EXTRA_EMAILS = {"swetha": "swetha@example.com", "arun": "arun@example.com"}
 
 
 @pytest.fixture
 def users(client):
     people = {name: register(client, name) for name in ("alice", "bob", "carol")}
-    people.update({name: register(client, name, phone) for name, phone in EXTRA_PHONES.items()})
+    people.update({name: register(client, name, email) for name, email in EXTRA_EMAILS.items()})
     return people
 
 
@@ -127,7 +127,7 @@ def test_counterparty_name_is_the_full_name(client):
         json={
             "username": "swetha",
             "name": "Swetha Rao",
-            "phone": EXTRA_PHONES["swetha"],
+            "email": EXTRA_EMAILS["swetha"],
             "password": "password123",
             "confirm_password": "password123",
         },
@@ -135,7 +135,7 @@ def test_counterparty_name_is_the_full_name(client):
     assert started.status_code == 202, started.text
     response = client.post(
         "/auth/register/verify",
-        json={"pending_id": started.json()["pending_id"], "code": last_code(EXTRA_PHONES["swetha"])},
+        json={"pending_id": started.json()["pending_id"], "code": last_code(EXTRA_EMAILS["swetha"])},
     )
     assert response.status_code == 201, response.text
     space = create_space(client, alice, "Flat", ["swetha"])

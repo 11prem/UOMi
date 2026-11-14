@@ -254,7 +254,7 @@ def fill(space_id: int, count: int) -> list[str]:
         position = max(db.scalars(select(SpaceMember.position).where(SpaceMember.space_id == space_id)))
         for n in range(count):
             name = f"filler{n:02d}"
-            db.add(User(username=name, name=name.title(), phone=f"+9190000{n:05d}", password_hash="x"))
+            db.add(User(username=name, name=name.title(), email=f"{name}@example.com", password_hash="x"))
             db.flush()
             db.add(SpaceMember(space_id=space_id, username=name, position=position + 1 + n))
             names.append(name)

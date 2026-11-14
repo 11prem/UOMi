@@ -1,4 +1,4 @@
-"""Hardening: CORS, one error envelope, id bounds, atomic OTP attempts, phone normalising, example env."""
+"""Hardening: CORS, one error envelope, id bounds, atomic OTP attempts, email normalising, example env."""
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +18,7 @@ from app.models.password_reset import PasswordReset
 from app.models.user import User
 from app.services import auth_service, group_service
 from app.utils import security
-from app.utils.validators import normalize_phone
+from app.utils.validators import normalize_email
 from tests.helpers import auth, register, register_payload
 
 ORIGIN = "http://localhost:8081"
@@ -134,14 +134,11 @@ def test_oversized_ids_are_422_not_500(client):
         assert response.json()["detail"]["code"] == "validation_error"
 
 
-# --- Phone ------------------------------------------------------------------
+# --- Email ------------------------------------------------------------------
 
 
-def test_phone_with_country_code_no_plus():
-    assert normalize_phone("91 98765 43210") == "+919876543210"
-    assert normalize_phone("9876543210") == "+919876543210"
-    assert normalize_phone("09876543210") == "+919876543210"
-    assert normalize_phone("9198765432") == "+919198765432"  # a 10-digit national number that starts with 91
+def test_email_is_trimmed_and_lowercased():
+    assert normalize_email("  Alice@Example.COM ") == "alice@example.com"
 
 
 # --- OTP --------------------------------------------------------------------
@@ -152,17 +149,17 @@ def test_otp_attempts_counted_atomically(tmp_path):
     that is read, added to in Python and written back (all 8 would write attempts=1)."""
     engine = make_engine(f"sqlite:///{(tmp_path / 'otp.db').as_posix()}")
     Base.metadata.create_all(engine)
-    phone = "+919876543210"
+    email = "alice@example.com"
     with Session(engine) as db:
-        db.add(User(username="alice", name="Alice", phone=phone, password_hash="x"))
+        db.add(User(username="alice", name="Alice", email=email, password_hash="x"))
         db.flush()  # the user row first: the reset row has a foreign key to it
         db.add(
             PasswordReset(
                 public_id="pw_test",
                 requested_username="alice",
-                phone=phone,
+                email=email,
                 username="alice",
-                code_hash=security.hash_otp(phone, "123456"),
+                code_hash=security.hash_otp(email, "123456"),
                 last_sent_at=utcnow(),
                 expires_at=utcnow() + timedelta(minutes=5),
                 valid_until=utcnow() + timedelta(minutes=30),

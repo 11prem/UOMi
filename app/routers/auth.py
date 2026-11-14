@@ -1,4 +1,4 @@
-"""Auth endpoints: Create Account (with phone verification), Sign In, session refresh, Forgot Password, Logout."""
+"""Auth endpoints: Create Account (with email verification), Sign In, session refresh, Forgot Password, Logout."""
 
 from typing import Annotated
 
@@ -29,13 +29,13 @@ from app.utils.errors import field_error
 from app.utils.rate_limit import (
     forgot_limit,
     login_limit,
-    phone_check_limit,
+    email_check_limit,
     register_limit,
     resend_limit,
     username_check_limit,
     verify_otp_limit,
 )
-from app.utils.validators import normalize_phone, validate_new_username
+from app.utils.validators import normalize_email, validate_new_username
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -51,7 +51,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def register(
     data: RegisterRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> SignupStarted:
-    """Create Account -> Verify phone. Texts a code; the account does NOT exist until `/auth/register/verify`."""
+    """Create Account -> Verify email. Emails a code; the account does NOT exist until `/auth/register/verify`."""
     return auth_service.start_signup(db, data, background_tasks)
 
 
@@ -62,7 +62,7 @@ def register(
     dependencies=[Depends(verify_otp_limit)],
 )
 def register_verify(data: VerifySignupRequest, db: Session = Depends(get_db)) -> TokenPair:
-    """Verify phone -> Home Page. The right code creates the account and signs the new user straight in."""
+    """Verify email -> Home Page. The right code creates the account and signs the new user straight in."""
     return auth_service.verify_signup(db, data.pending_id, data.code)
 
 
@@ -84,14 +84,14 @@ def check_username(username: Annotated[str, Query(max_length=50)], db: Session =
     return AvailabilityOut(available=auth_service.username_available(db, clean))
 
 
-@router.get("/check-phone", response_model=AvailabilityOut, dependencies=[Depends(phone_check_limit)])
-def check_phone(phone: Annotated[str, Query(max_length=30)], db: Session = Depends(get_db)) -> AvailabilityOut:
-    """Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address."""
+@router.get("/check-email", response_model=AvailabilityOut, dependencies=[Depends(email_check_limit)])
+def check_email(email: Annotated[str, Query(max_length=300)], db: Session = Depends(get_db)) -> AvailabilityOut:
+    """Is this email free? Tells anyone whether an address has an account, so it has a tight limit per address."""
     try:
-        clean = normalize_phone(phone)
+        clean = normalize_email(email)
     except ValueError as problem:
-        raise field_error("phone", str(problem)) from None
-    return AvailabilityOut(available=auth_service.phone_available(db, clean))
+        raise field_error("email", str(problem)) from None
+    return AvailabilityOut(available=auth_service.email_available(db, clean))
 
 
 @router.post("/login", response_model=TokenPair, dependencies=[Depends(login_limit)])
@@ -115,7 +115,7 @@ def refresh(data: RefreshRequest, db: Session = Depends(get_db)) -> TokenPair:
 def forgot(
     data: ForgotRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> ForgotResponse:
-    """Forgot Password: a username -> a code is texted to its phone, and the masked number comes back.
+    """Forgot Password: a username -> a code is emailed to its address, and the masked email comes back.
 
     The reply has the same shape for a username that does not exist.
     """

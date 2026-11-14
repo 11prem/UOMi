@@ -7,8 +7,6 @@ import { MemberPlate } from '../MemberPlate';
 import { OtpInput } from '../OtpInput';
 import { Stamp } from '../Stamp';
 import { TextField } from '../TextField';
-import { COUNTRIES } from '../../domain/phone';
-import { PhoneField } from '../../features/auth/PhoneField';
 
 // Screens always put kit parts inside a host view; RNTL's label queries miss a TextInput whose only host ancestor is the field.
 const inTheme = (ui: React.ReactElement) =>
@@ -76,14 +74,14 @@ describe('error hints (aria-invalid is web only)', () => {
         <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } }}>
           <View>
             <TextField label="Username" />
-            <PhoneField label="Phone number" value="" country={COUNTRIES[0]} onCountry={() => {}} error="Enter a valid mobile number" />
+            <TextField label="Email" error="Enter a valid email address" />
             <OtpInput value="" onChange={() => {}} error="That code is wrong" />
           </View>
         </SafeAreaProvider>
       </ThemeProvider>,
     );
     expect(screen.getByLabelText('Username').props.accessibilityHint).toBeUndefined();
-    expect(screen.getByLabelText('Phone number').props.accessibilityHint).toBe('Enter a valid mobile number');
+    expect(screen.getByLabelText('Email').props.accessibilityHint).toBe('Enter a valid email address');
     expect(screen.getByLabelText('6-digit code').props.accessibilityHint).toBe('That code is wrong');
   });
 });
@@ -95,12 +93,12 @@ describe('TextField', () => {
   });
 
   it('puts a left slot inside the border, before the input', async () => {
-    await inTheme(<TextField label="Phone number" left={<Text>IN +91</Text>} />);
-    const input = screen.getByLabelText('Phone number');
+    await inTheme(<TextField label="Amount" left={<Text>INR</Text>} />);
+    const input = screen.getByLabelText('Amount');
     const row = input.parent!;
     expect(flat(input).borderWidth).toBeUndefined();
     expect(flat(row)).toMatchObject({ borderWidth: 1, minHeight: 52, flexDirection: 'row' });
-    expect(row.children[0]).toBe(screen.getByText('IN +91')); // the slot comes first, inside the bordered row
+    expect(row.children[0]).toBe(screen.getByText('INR')); // the slot comes first, inside the bordered row
   });
 });
 

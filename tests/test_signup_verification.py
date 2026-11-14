@@ -1,4 +1,4 @@
-"""Sign up with phone verification (task 1.1.1, specs § 4.3): the account exists only after the texted code."""
+"""Sign up with email verification (task 1.1.1, specs § 4.3): the account exists only after the emailed code."""
 
 from datetime import timedelta
 
@@ -10,7 +10,7 @@ from app.database import Base, SessionLocal, make_engine, utcnow
 from app.models.pending_signup import PendingSignup
 from app.models.user import User
 from app.services import auth_service
-from tests.helpers import PASSWORD, PHONES, db_all, db_exec, error_code, last_code, register, register_payload, rewind, start_signup, wrong_code
+from tests.helpers import PASSWORD, EMAILS, db_all, db_exec, error_code, last_code, register, register_payload, rewind, start_signup, wrong_code
 from tests.test_phase2_security import run_in_parallel
 
 PAST_COOLDOWN = settings.OTP_RESEND_COOLDOWN_SECONDS + 1
@@ -35,7 +35,7 @@ def started(client, username="alice", **kwargs) -> dict:
 
 
 def age_signups(seconds: int) -> None:
-    """Pretend the sign-ups, and the texts sent for them, happened `seconds` ago."""
+    """Pretend the sign-ups, and the emails sent for them, happened `seconds` ago."""
     with SessionLocal() as session:
         for row in session.scalars(select(PendingSignup)):
             row.created_at -= timedelta(seconds=seconds)
@@ -52,19 +52,19 @@ def otp_codes(monkeypatch):
     return use
 
 
-# --- Step 1: Create Account texts a code and creates nothing ------------------
+# --- Step 1: Create Account emails a code and creates nothing ------------------
 
 
-def test_starting_a_sign_up_texts_a_code_and_creates_no_account(client, sms_outbox):
+def test_starting_a_sign_up_emails_a_code_and_creates_no_account(client, email_outbox):
     body = started(client)
 
     assert body["pending_id"].startswith("su_")
-    assert body["masked_phone"] == "+91 98******10"
+    assert body["masked_email"] == "al***@example.com"
     assert body["expires_in_seconds"] == 300
     assert body["resend_after_seconds"] == 30
-    assert [phone for phone, _ in sms_outbox] == ["+919876543210"]
+    assert [to for to, _ in email_outbox] == ["alice@example.com"]
     assert db_all(select(User)) == []  # no account yet
-    assert login(client).status_code == 401  # a phone nobody has verified cannot sign in
+    assert login(client).status_code == 401  # an email nobody has verified cannot sign in
 
 
 def test_the_password_is_kept_only_as_a_hash_and_the_code_only_as_an_hmac(client):
@@ -72,56 +72,56 @@ def test_the_password_is_kept_only_as_a_hash_and_the_code_only_as_an_hmac(client
     pending = db_all(select(PendingSignup))[0]
 
     assert pending.password_hash.startswith("$2") and PASSWORD not in pending.password_hash
-    assert len(pending.code_hash) == 64 and last_code(PHONES["alice"]) not in pending.code_hash
+    assert len(pending.code_hash) == 64 and last_code(EMAILS["alice"]) not in pending.code_hash
 
 
-def test_a_taken_username_or_phone_is_refused_before_any_text_is_sent(client, sms_outbox):
+def test_a_taken_username_or_email_is_refused_before_any_email_is_sent(client, email_outbox):
     register(client, "alice")
-    sms_outbox.clear()
+    email_outbox.clear()
 
-    username = client.post("/auth/register", json=register_payload(username="alice", phone=PHONES["bob"]))
-    phone = client.post("/auth/register", json=register_payload(username="bob", phone=PHONES["alice"]))
+    username = client.post("/auth/register", json=register_payload(username="alice", email=EMAILS["bob"]))
+    taken_email = client.post("/auth/register", json=register_payload(username="bob", email=EMAILS["alice"]))
 
     assert (username.status_code, error_code(username)) == (409, "username_taken")
-    assert (phone.status_code, error_code(phone)) == (409, "phone_taken")
+    assert (taken_email.status_code, error_code(taken_email)) == (409, "email_taken")
     assert username.json()["detail"]["message"] == "Username already taken"
-    assert phone.json()["detail"]["message"] == "Phone number already registered"
-    assert sms_outbox == []  # nothing was sent
+    assert taken_email.json()["detail"]["message"] == "Email already registered"
+    assert email_outbox == []  # nothing was sent
     assert [p for p in db_all(select(PendingSignup)) if p.used_at is None] == []  # and no new sign-up was kept
 
 
 def test_a_started_sign_up_reserves_nothing(client):
-    """Specs § 4.3: if the user leaves before verifying, the username and phone stay free."""
+    """Specs § 4.3: if the user leaves before verifying, the username and email stay free."""
     started(client, "alice")
 
-    other = client.post("/auth/register", json=register_payload(username="alice", phone=PHONES["bob"]))
+    other = client.post("/auth/register", json=register_payload(username="alice", email=EMAILS["bob"]))
     assert other.status_code == 202  # someone else can start with the same username
     assert client.get("/auth/check-username", params={"username": "alice"}).json() == {"available": True}
-    assert client.get("/auth/check-phone", params={"phone": PHONES["alice"]}).json() == {"available": True}
+    assert client.get("/auth/check-email", params={"email": EMAILS["alice"]}).json() == {"available": True}
 
 
 # --- Step 2: the right code creates the account -------------------------------
 
 
-def test_the_right_code_creates_the_account_and_signs_the_user_in(client, sms_outbox):
+def test_the_right_code_creates_the_account_and_signs_the_user_in(client, email_outbox):
     pending_id = started(client)["pending_id"]
 
-    response = verify(client, pending_id, last_code(PHONES["alice"]))
+    response = verify(client, pending_id, last_code(EMAILS["alice"]))
 
     assert response.status_code == 201
     tokens = response.json()
     assert tokens["token_type"] == "bearer" and tokens["idle_timeout_seconds"] == settings.SESSION_IDLE_TIMEOUT_MINUTES * 60
     assert client.get("/users/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}).json() == {
-        "username": "alice", "name": "Alice", "phone": "+919876543210", "currency": "INR", "notifications_on": True,
+        "username": "alice", "name": "Alice", "email": "alice@example.com", "currency": "INR", "notifications_on": True,
     }
-    [kept] = db_all(select(PendingSignup))  # kept for a day, because the daily text cap counts it, but used up
+    [kept] = db_all(select(PendingSignup))  # kept for a day, because the daily code cap counts it, but used up
     assert kept.used_at is not None and kept.password_hash == ""  # and its password hash is wiped
     assert login(client).status_code == 200  # the password given at sign-up is the one that works
 
 
 def test_a_code_cannot_be_used_twice(client):
     pending_id = started(client)["pending_id"]
-    code = last_code(PHONES["alice"])
+    code = last_code(EMAILS["alice"])
     assert verify(client, pending_id, code).status_code == 201
 
     again = verify(client, pending_id, code)
@@ -133,7 +133,7 @@ def test_a_code_cannot_be_used_twice(client):
 def test_a_wrong_code_is_its_own_error_and_creates_nothing(client):
     pending_id = started(client)["pending_id"]
 
-    wrong = verify(client, pending_id, wrong_code(last_code(PHONES["alice"])))
+    wrong = verify(client, pending_id, wrong_code(last_code(EMAILS["alice"])))
 
     assert wrong.status_code == 400 and error_code(wrong) == "invalid_code"
     assert wrong.json()["detail"]["message"] == "That code is incorrect"
@@ -142,7 +142,7 @@ def test_a_wrong_code_is_its_own_error_and_creates_nothing(client):
 
 def test_five_wrong_codes_lock_the_sign_up_for_ten_minutes(client):
     pending_id = started(client)["pending_id"]
-    real = last_code(PHONES["alice"])
+    real = last_code(EMAILS["alice"])
     for _ in range(settings.OTP_MAX_ATTEMPTS - 1):
         assert error_code(verify(client, pending_id, wrong_code(real))) == "invalid_code"
 
@@ -155,11 +155,11 @@ def test_five_wrong_codes_lock_the_sign_up_for_ten_minutes(client):
     assert error_code(resend(client, pending_id)) == "otp_locked"
     assert db_all(select(User)) == []
 
-    rewind(PendingSignup, settings.OTP_LOCK_MINUTES * 60 + 1)  # ten minutes pass: the code, the lock and the text age together
+    rewind(PendingSignup, settings.OTP_LOCK_MINUTES * 60 + 1)  # ten minutes pass: the code, the lock and the email age together
     expired = verify(client, pending_id, real)
     assert expired.status_code == 400 and error_code(expired) == "code_expired"  # the code lived only 5 minutes
     assert resend(client, pending_id).status_code == 200  # the lock is over, so "Resend code" works again
-    assert verify(client, pending_id, last_code(PHONES["alice"])).status_code == 201
+    assert verify(client, pending_id, last_code(EMAILS["alice"])).status_code == 201
 
 
 def test_an_expired_code_has_its_own_error_and_resend_fixes_it(client, otp_codes):
@@ -176,15 +176,15 @@ def test_an_expired_code_has_its_own_error_and_resend_fixes_it(client, otp_codes
     assert verify(client, pending_id, "222222").status_code == 201
 
 
-def test_a_sign_up_that_ran_out_has_its_own_error_and_frees_the_username_and_phone(client):
+def test_a_sign_up_that_ran_out_has_its_own_error_and_frees_the_username_and_email(client):
     pending_id = started(client)["pending_id"]
-    code = last_code(PHONES["alice"])
+    code = last_code(EMAILS["alice"])
     db_exec(update(PendingSignup).values(valid_until=utcnow() - timedelta(seconds=1)))
 
     for response in (verify(client, pending_id, code), resend(client, pending_id)):
         assert response.status_code == 400 and error_code(response) == "verification_expired"
     assert db_all(select(User)) == []
-    # nothing was held back: the same username and phone can sign up from scratch
+    # nothing was held back: the same username and email can sign up from scratch
     age_signups(PAST_COOLDOWN)
     assert register(client, "alice")["token_type"] == "bearer"
 
@@ -200,34 +200,34 @@ def test_an_unknown_or_foreign_id_is_not_found(client):
 
 def test_whoever_verifies_first_gets_the_username(client):
     first = started(client, "alice")["pending_id"]
-    first_code = last_code(PHONES["alice"])
-    second = client.post("/auth/register", json=register_payload(username="alice", phone=PHONES["bob"])).json()["pending_id"]
-    second_code = last_code(PHONES["bob"])
+    first_code = last_code(EMAILS["alice"])
+    second = client.post("/auth/register", json=register_payload(username="alice", email=EMAILS["bob"])).json()["pending_id"]
+    second_code = last_code(EMAILS["bob"])
 
     assert verify(client, first, first_code).status_code == 201
     late = verify(client, second, second_code)
 
     assert late.status_code == 409 and error_code(late) == "username_taken"
-    assert [u.phone for u in db_all(select(User))] == ["+919876543210"]
+    assert [u.email for u in db_all(select(User))] == ["alice@example.com"]
 
 
-def test_whoever_verifies_first_gets_the_phone(client, otp_codes):
+def test_whoever_verifies_first_gets_the_email(client, otp_codes):
     otp_codes("111111", "222222")
     first = started(client, "alice")["pending_id"]
-    age_signups(PAST_COOLDOWN)  # past the cooldown, so a second sign-up may start for the same phone
-    second = client.post("/auth/register", json=register_payload(username="alice2", phone=PHONES["alice"])).json()["pending_id"]
+    age_signups(PAST_COOLDOWN)  # past the cooldown, so a second sign-up may start for the same email
+    second = client.post("/auth/register", json=register_payload(username="alice2", email=EMAILS["alice"])).json()["pending_id"]
 
     assert verify(client, first, "111111").status_code == 201
     late = verify(client, second, "222222")
 
-    assert late.status_code == 409 and error_code(late) == "phone_taken"
+    assert late.status_code == 409 and error_code(late) == "email_taken"
     assert [u.username for u in db_all(select(User))] == ["alice"]
 
 
 # --- Resend code ---------------------------------------------------------------
 
 
-def test_resend_gives_a_fresh_code_and_the_old_one_stops_working(client, sms_outbox, otp_codes):
+def test_resend_gives_a_fresh_code_and_the_old_one_stops_working(client, email_outbox, otp_codes):
     otp_codes("111111", "222222")
     pending_id = started(client)["pending_id"]
     age_signups(PAST_COOLDOWN)
@@ -236,12 +236,12 @@ def test_resend_gives_a_fresh_code_and_the_old_one_stops_working(client, sms_out
 
     assert response.status_code == 200
     assert response.json() == {"expires_in_seconds": 300, "resend_after_seconds": 30}
-    assert [phone for phone, _ in sms_outbox] == ["+919876543210"] * 2
+    assert [to for to, _ in email_outbox] == ["alice@example.com"] * 2
     assert error_code(verify(client, pending_id, "111111")) == "invalid_code"
     assert verify(client, pending_id, "222222").status_code == 201
 
 
-def test_resend_has_a_thirty_second_cooldown_with_its_own_error(client, sms_outbox):
+def test_resend_has_a_thirty_second_cooldown_with_its_own_error(client, email_outbox):
     pending_id = started(client)["pending_id"]
 
     too_soon = resend(client, pending_id)
@@ -249,12 +249,12 @@ def test_resend_has_a_thirty_second_cooldown_with_its_own_error(client, sms_outb
     assert too_soon.status_code == 429 and error_code(too_soon) == "resend_too_soon"
     assert 0 < too_soon.json()["detail"]["retry_after_seconds"] <= 30
     assert int(too_soon.headers["Retry-After"]) > 0
-    assert len(sms_outbox) == 1
+    assert len(email_outbox) == 1
     age_signups(PAST_COOLDOWN)
     assert resend(client, pending_id).status_code == 200
 
 
-def test_a_sign_up_gets_at_most_three_texts(client, sms_outbox):
+def test_a_sign_up_gets_at_most_three_emails(client, email_outbox):
     pending_id = started(client)["pending_id"]
     for _ in range(settings.OTP_MAX_SENDS_PER_REQUEST - 1):
         age_signups(PAST_COOLDOWN)
@@ -264,7 +264,7 @@ def test_a_sign_up_gets_at_most_three_texts(client, sms_outbox):
     capped = resend(client, pending_id)
 
     assert capped.status_code == 429 and error_code(capped) == "too_many_requests"
-    assert len(sms_outbox) == settings.OTP_MAX_SENDS_PER_REQUEST
+    assert len(email_outbox) == settings.OTP_MAX_SENDS_PER_REQUEST
 
 
 def test_resend_starts_the_wrong_guesses_again_and_lengthens_the_sign_up(client, otp_codes):
@@ -285,34 +285,34 @@ def test_resend_starts_the_wrong_guesses_again_and_lengthens_the_sign_up(client,
 # --- Limits ---------------------------------------------------------------------
 
 
-def test_the_same_phone_cannot_start_sign_ups_without_limit(client, sms_outbox):
+def test_the_same_email_cannot_start_sign_ups_without_limit(client, email_outbox):
     for n in range(settings.OTP_MAX_REQUESTS_PER_HOUR):
-        assert client.post("/auth/register", json=register_payload(username=f"user{n}", phone=PHONES["alice"])).status_code == 202
+        assert client.post("/auth/register", json=register_payload(username=f"user{n}", email=EMAILS["alice"])).status_code == 202
         age_signups(PAST_COOLDOWN)
 
-    blocked = client.post("/auth/register", json=register_payload(username="one.more", phone=PHONES["alice"]))
+    blocked = client.post("/auth/register", json=register_payload(username="one.more", email=EMAILS["alice"]))
 
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
-    assert len(sms_outbox) == settings.OTP_MAX_REQUESTS_PER_HOUR
+    assert len(email_outbox) == settings.OTP_MAX_REQUESTS_PER_HOUR
 
 
-def test_asking_again_straight_away_hits_the_cooldown(client, sms_outbox):
+def test_asking_again_straight_away_hits_the_cooldown(client, email_outbox):
     started(client)
-    again = client.post("/auth/register", json=register_payload(username="alice2", phone=PHONES["alice"]))
+    again = client.post("/auth/register", json=register_payload(username="alice2", email=EMAILS["alice"]))
     assert again.status_code == 429 and error_code(again) == "resend_too_soon"
-    assert len(sms_outbox) == 1
+    assert len(email_outbox) == 1
 
 
-def test_a_text_failure_does_not_fail_the_sign_up(client, monkeypatch):
-    def broken(phone, message):
-        raise RuntimeError("provider down")
+def test_an_email_failure_does_not_fail_the_sign_up(client, monkeypatch):
+    def broken(to, subject, body):
+        raise RuntimeError("mail server down")
 
-    monkeypatch.setattr("app.services.sms_service.send_sms", broken)
+    monkeypatch.setattr("app.services.email_service.send_email", broken)
     assert start_signup(client, "alice").status_code == 202  # logged, never raised
 
 
 def test_abandoned_sign_ups_are_forgotten_only_a_day_after_they_end(client):
-    """They are counted by the daily text cap, so they must not vanish the moment they expire."""
+    """They are counted by the daily code cap, so they must not vanish the moment they expire."""
     started(client, "alice")
     db_exec(update(PendingSignup).values(valid_until=utcnow() - timedelta(hours=2)))
     age_signups(PAST_COOLDOWN)
@@ -344,31 +344,31 @@ def test_check_username_refuses_what_could_never_be_a_username(client):
         assert [f["field"] for f in response.json()["detail"]["fields"]] == ["username"], bad
 
 
-def test_check_phone(client):
+def test_check_email(client):
     register(client, "alice")
 
-    assert client.get("/auth/check-phone", params={"phone": "9876543210"}).json() == {"available": False}
-    assert client.get("/auth/check-phone", params={"phone": "+91 98765 43210"}).json() == {"available": False}
-    assert client.get("/auth/check-phone", params={"phone": "9876543211"}).json() == {"available": True}
-    bad = client.get("/auth/check-phone", params={"phone": "12345"})
-    assert bad.status_code == 422 and bad.json()["detail"]["fields"][0]["field"] == "phone"
+    assert client.get("/auth/check-email", params={"email": "alice@example.com"}).json() == {"available": False}
+    assert client.get("/auth/check-email", params={"email": "  Alice@EXAMPLE.com "}).json() == {"available": False}  # any case
+    assert client.get("/auth/check-email", params={"email": "bob@example.com"}).json() == {"available": True}
+    bad = client.get("/auth/check-email", params={"email": "not-an-email"})
+    assert bad.status_code == 422 and bad.json()["detail"]["fields"][0]["field"] == "email"
 
 
-def test_the_checks_are_limited_per_address_and_the_phone_check_is_tighter(client, monkeypatch):
+def test_the_checks_are_limited_per_address_and_the_email_check_is_tighter(client, monkeypatch):
     monkeypatch.setattr(settings, "USERNAME_CHECK_MAX_PER_IP_PER_MINUTE", 3)
-    monkeypatch.setattr(settings, "PHONE_CHECK_MAX_PER_IP_PER_HOUR", 2)
+    monkeypatch.setattr(settings, "EMAIL_CHECK_MAX_PER_IP_PER_HOUR", 2)
     assert [client.get("/auth/check-username", params={"username": "abc"}).status_code for _ in range(3)] == [200] * 3
     blocked = client.get("/auth/check-username", params={"username": "abc"})
     assert blocked.status_code == 429 and error_code(blocked) == "too_many_requests"
 
-    assert [client.get("/auth/check-phone", params={"phone": "9876543211"}).status_code for _ in range(2)] == [200, 200]
-    assert client.get("/auth/check-phone", params={"phone": "9876543211"}).status_code == 429
+    assert [client.get("/auth/check-email", params={"email": "bob@example.com"}).status_code for _ in range(2)] == [200, 200]
+    assert client.get("/auth/check-email", params={"email": "bob@example.com"}).status_code == 429
 
 
-def test_the_phone_is_not_in_the_access_log_for_the_check(client):
+def test_the_email_is_not_in_the_access_log_for_the_check(client):
     from app.utils.log_redaction import redact
 
-    assert "9876543210" not in redact("GET /auth/check-phone?phone=9876543210 HTTP/1.1")
+    assert "alice@example.com" not in redact("GET /auth/check-email?email=alice@example.com HTTP/1.1")
 
 
 # --- Two people verifying at the same moment -------------------------------------
@@ -391,9 +391,9 @@ def test_one_right_code_cannot_create_the_account_twice_at_the_same_moment(file_
     with Session(file_engine) as db:
         db.add(
             PendingSignup(
-                public_id="su_race", username="alice", name="Alice", phone="+919876543210",
+                public_id="su_race", username="alice", name="Alice", email="alice@example.com",
                 password_hash=security.hash_password("password123"),
-                code_hash=security.hash_otp("+919876543210", "123456"),
+                code_hash=security.hash_otp("alice@example.com", "123456"),
                 last_sent_at=now, expires_at=now + timedelta(minutes=5), valid_until=now + timedelta(minutes=30),
             )
         )

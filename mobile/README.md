@@ -17,6 +17,7 @@ Rules that only apply in server mode:
 
 - **Endpoints that exist work:** sign in and out, Home, Create Space, people search, the Space page and Notifications use the real backend.
 - **Endpoints that don't exist yet show a panel:** Create Account, Forgot password, expenses, settle up, transactions, profile editing and space settings show **"Not available on this server yet"**. See `../BACKEND-DEVIATIONS.md`.
+- **Email, not phone numbers:** sign-up and forgot password use an email address (demo mode: the code is always `123456`, and a changed password works offline). People are found by username only.
 - **Idle sign-out:** the app returns to Sign In after about 29.5 idle minutes: the server's limit (30 minutes) minus a 30-second margin. It follows whatever the server says (`idle_timeout_seconds`). Demo mode stays signed in.
 - **Switching modes signs you out** and clears cached data, so the two modes never mix.
 
@@ -98,7 +99,7 @@ Command-line tools 23+ replace `sdkmanager` with `android sdk`. Set `JAVA_HOME` 
 | Path | What it holds |
 |---|---|
 | `app/` | Expo Router routes: `(auth)/` sign-in flows, `(tabs)/` Home, Notifications, Transactions and Profile, plus `space/`, `expense/`, `payment/` and `profile-edit`. |
-| `src/domain/` | Pure TypeScript: money (integer minor units, Indian grouping), phone (libphonenumber, mobile numbers only), the four split types with the rounding rule, pairwise balances, and the balance wording. Fully unit-tested. |
+| `src/domain/` | Pure TypeScript: money (integer minor units, Indian grouping), email (validation and masking), the four split types with the rounding rule, pairwise balances, and the balance wording. Fully unit-tested. |
 | `src/services/` | One `Services` interface (`types.ts`), with `demo/` (on-device data in AsyncStorage) and `server/` (HTTP client: single-flight token refresh, idle check, error-code mapping). |
 | `src/state/` | Session store: mode, server URL, user, idle timer, services registry. |
 | `src/ui/` | The stationery UI kit from `DESIGN.md`: sheets, ledger rows, member plates, stamps, carbon copies, OTP input, sheets, toasts and confirm dialogs. |

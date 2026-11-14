@@ -1,4 +1,4 @@
-"""Input rules from the spec (task 1.1.4 and 1.1.5): usernames, names, passwords, space names, icons, phone numbers."""
+"""Input rules from the spec (task 1.1.4 and 1.1.5): usernames, names, passwords, space names, icons, email addresses."""
 
 import pytest
 
@@ -7,8 +7,8 @@ from app.models.group import Space
 from app.models.group_member import SpaceMember
 from app.models.user import User
 from app.utils import security
-from app.utils.validators import mask_phone, normalize_phone, parse_full_phone
-from tests.helpers import PHONES, auth, create_space, error_code, register, register_payload, start_signup
+from app.utils.validators import mask_email, normalize_email
+from tests.helpers import EMAILS, auth, create_space, error_code, register, register_payload, start_signup
 
 ICONS = ["home", "trip", "food", "office", "friends", "car", "party", "other"]
 
@@ -39,7 +39,7 @@ def test_older_accounts_with_longer_usernames_still_work_everywhere(client):
     """Accounts made under the looser 3-30 rule keep signing in and stay findable and addable."""
     long_name = "a" * 25
     with SessionLocal() as db:
-        db.add(User(username=long_name, name="Old Timer", phone="+919876543299", password_hash=security.hash_password("oldpass1")))
+        db.add(User(username=long_name, name="Old Timer", email="old.timer@example.com", password_hash=security.hash_password("oldpass1")))
         db.commit()
     alice = register(client, "alice")
 
@@ -53,7 +53,7 @@ def test_older_accounts_with_longer_usernames_still_work_everywhere(client):
 
 def test_a_name_of_50_characters_is_accepted_and_51_is_not(client):
     assert sign_up_with(client, name="n" * 50).status_code == 202
-    too_long = sign_up_with(client, username="bobby", phone=PHONES["bobby"], name="n" * 51)
+    too_long = sign_up_with(client, username="bobby", email=EMAILS["bobby"], name="n" * 51)
     assert too_long.status_code == 422 and "name" in fields_of(too_long)
 
 
@@ -82,7 +82,7 @@ def test_other_passwords_are_refused(client, password):
 
 def test_an_older_weaker_password_still_signs_in(client):
     with SessionLocal() as db:
-        db.add(User(username="old.timer", name="Old", phone="+919876543299", password_hash=security.hash_password("weakpass")))
+        db.add(User(username="old.timer", name="Old", email="old.timer@example.com", password_hash=security.hash_password("weakpass")))
         db.commit()
     assert client.post("/auth/login", json={"username": "old.timer", "password": "weakpass"}).status_code == 200
 
@@ -133,57 +133,62 @@ def test_any_other_icon_is_refused(client, icon):
     assert response.status_code == 422 and "icon" in fields_of(response)
 
 
-# --- Phone numbers (specs § 1, § 4.2): libphonenumber, mobile only, ASCII digits --------
+# --- Email addresses: a format check, ASCII only --------------------------------------------
+
+LONGEST_EMAIL = "a@" + ".".join(["b" * 61] * 4 + ["cccc"])  # 254 characters
+assert len(LONGEST_EMAIL) == 254
 
 VALID = [
-    ("9876543210", "+919876543210"),  # a national number: read as +91
-    ("+91 98765 43210", "+919876543210"),
-    ("91 98765 43210", "+919876543210"),  # with the country code but no plus
-    ("(+91) 98765-43210", "+919876543210"),
-    ("00919876543210", "+919876543210"),  # the international dialling prefix
-    ("+44 7911 123456", "+447911123456"),
-    ("+1 415 555 2671", "+14155552671"),
-    ("+971 50 123 4567", "+971501234567"),
-    ("  +91 9876543210  ", "+919876543210"),
+    ("alice@example.com", "alice@example.com"),
+    ("  Alice@Example.COM  ", "alice@example.com"),  # trimmed and lowercased
+    ("first.last+tag@sub.example.co.uk", "first.last+tag@sub.example.co.uk"),
+    ("o'brien_x-y@my-host.example.org", "o'brien_x-y@my-host.example.org"),
+    ("a@b.io", "a@b.io"),
+    ("a" * 64 + "@example.com", "a" * 64 + "@example.com"),  # the longest local part
+    (LONGEST_EMAIL, LONGEST_EMAIL),
 ]
 INVALID = [
-    ("+91 80 4123 4567", "a landline"),
-    ("12345", "too short"),
-    ("+91 98765 4321", "one digit short"),
-    ("+91 98765 432100", "one digit long"),
-    ("+9876543210", "no such country"),
-    ("98765abcde", "letters"),
-    ("++919876543210", "two pluses"),
-    ("+91 98765 43210 ext 5", "an extension"),
-    ("٩٨٧٦٥٤٣٢١٠", "Arabic-Indic digits"),
-    ("９８７６５４３２１０", "fullwidth digits"),
-    ("+९१ ९८७६५ ४३२१०", "Devanagari digits"),
     ("", "empty"),
     ("   ", "blank"),
+    ("alice", "no @"),
+    ("alice@", "no domain"),
+    ("@example.com", "no local part"),
+    ("alice@example", "no dot in the domain"),
+    ("alice@@example.com", "two @ in a row"),
+    ("a@b@example.com", "two @"),
+    ("ali ce@example.com", "a space in the local part"),
+    ("alice@exam ple.com", "a space in the domain"),
+    ("alice,bob@example.com", "a comma"),
+    ("alice@-example.com", "a label starting with a hyphen"),
+    ("alice@example-.com", "a label ending with a hyphen"),
+    ("alice@example..com", "an empty label"),
+    ("alice@.example.com", "a leading dot in the domain"),
+    ("alice@example.com.", "a trailing dot in the domain"),
+    ("alice@exam_ple.com", "an underscore in the domain"),
+    ("émile@example.com", "a non-ASCII local part"),
+    ("alice@exämple.com", "a non-ASCII domain"),
+    ("٩٨٧٦@example.com", "Arabic-Indic digits"),
+    ("a" * 65 + "@example.com", "a local part over 64"),
+    ("alice@" + "b" * 64 + ".com", "a label over 63"),
+    (LONGEST_EMAIL + "c", "over 254 characters"),
 ]
 
 
 @pytest.mark.parametrize("typed, expected", VALID)
-def test_real_mobile_numbers_are_normalised(typed, expected):
-    assert normalize_phone(typed) == expected
+def test_real_email_addresses_are_normalised(typed, expected):
+    assert normalize_email(typed) == expected
 
 
 @pytest.mark.parametrize("typed, why", INVALID, ids=[why for _, why in INVALID])
 def test_anything_else_is_refused(typed, why):
-    with pytest.raises(ValueError):
-        normalize_phone(typed)
+    with pytest.raises(ValueError, match="Enter a valid email address"):
+        normalize_email(typed)
 
 
 @pytest.mark.parametrize("typed, why", INVALID, ids=[why for _, why in INVALID])
-def test_a_bad_number_is_a_validation_error_on_sign_up(client, typed, why):
-    response = sign_up_with(client, phone=typed)
-    assert response.status_code == 422 and "phone" in fields_of(response)
-
-
-def test_look_alike_digits_are_not_a_phone_number_in_search_either():
-    assert parse_full_phone("٩٨٧٦٥٤٣٢١٠") is None
-    assert parse_full_phone("９８７６５４３２１０") is None
-    assert parse_full_phone("98765 43210") == "+919876543210"
+def test_a_bad_email_is_a_validation_error_on_sign_up(client, typed, why):
+    response = sign_up_with(client, email=typed)
+    assert response.status_code == 422 and "email" in fields_of(response)
 
 
 def test_look_alike_digits_are_not_a_code():
@@ -199,38 +204,34 @@ def test_look_alike_digits_are_not_a_code():
     assert VerifyOTPRequest(reset_id="pw_x", code="123456").code == "123456"
 
 
-def test_the_same_phone_typed_two_ways_is_one_phone(client):
+def test_the_same_email_typed_two_ways_is_one_email(client):
     register(client, "alice")
-    for typed in ("9876543210", "+91 98765 43210", "(+91) 98765-43210"):
-        again = sign_up_with(client, username="alice2", phone=typed)
-        assert again.status_code == 409 and error_code(again) == "phone_taken", typed
+    for typed in ("alice@example.com", "ALICE@Example.COM", "  Alice@example.com "):
+        again = sign_up_with(client, username="alice2", email=typed)
+        assert again.status_code == 409 and error_code(again) == "email_taken", typed
 
 
-# --- The masked number (specs § 1) --------------------------------------------
+# --- The masked email -----------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "phone, masked",
+    "email, masked",
     [
-        ("+918012345631", "+91 80******31"),  # the spec's own example
-        ("+919876543210", "+91 98******10"),
-        ("+14155552671", "+1 41******71"),
-        ("+971501234567", "+971 50*****67"),  # a 9-digit national number
-        ("+447911123456", "+44 79******56"),
+        ("kabir.r@example.com", "ka*****@example.com"),
+        ("ab@x.io", "a*@x.io"),
+        ("a@x.io", "*@x.io"),  # one letter is always hidden
+        ("abc@x.io", "ab*@x.io"),
+        ("alice@example.com", "al***@example.com"),
     ],
 )
-def test_the_masked_number_shows_the_first_two_and_last_two_digits(phone, masked):
-    assert mask_phone(phone) == masked
+def test_the_masked_email_keeps_two_letters_and_hides_the_rest_of_the_local_part(email, masked):
+    assert mask_email(email) == masked
 
 
-def test_a_masked_number_never_contains_the_middle_digits():
-    assert "7654" not in mask_phone("+919876543210")
-
-
-def test_a_sign_up_shows_the_masked_number_not_the_number(client):
+def test_a_sign_up_shows_the_masked_email_not_the_email(client):
     response = start_signup(client, "alice")
-    assert response.json()["masked_phone"] == "+91 98******10"
-    assert PHONES["alice"] not in response.text
+    assert response.json()["masked_email"] == "al***@example.com"
+    assert EMAILS["alice"] not in response.text
 
 
 # --- Characters PostgreSQL would refuse, and lengths its columns would refuse (a 500 there, so a 422 here) ------
@@ -245,7 +246,7 @@ def test_a_nul_character_is_refused_in_every_free_text_input(client):
     pending_id = start_signup(client, "bob").json()["pending_id"]
 
     attempts = [
-        client.post("/auth/register", json=register_payload(username="carol", phone=PHONES["carol"], name="Ca" + NUL + "rol")),
+        client.post("/auth/register", json=register_payload(username="carol", email=EMAILS["carol"], name="Ca" + NUL + "rol")),
         client.post("/auth/forgot", json={"username": "ali" + NUL + "ce"}),
         client.post("/auth/login", json={"username": "ali" + NUL + "ce", "password": "password123"}),
         client.post("/auth/otp/resend", json={"id": "su_" + NUL}),

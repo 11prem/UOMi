@@ -31,7 +31,7 @@ jest.mock('expo-secure-store', () => {
 });
 
 const APP = path.join(__dirname, '../../app');
-const KABIR: User = { id: 'u_kabir', username: 'kabir.r', name: 'Kabir Rao', phone: null, phoneVerified: true, avatarUrl: null, plate: 1 };
+const KABIR: User = { id: 'u_kabir', username: 'kabir.r', name: 'Kabir Rao', email: null, emailVerified: true, avatarUrl: null, plate: 1 };
 const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } };
 
 function Providers({ children }: { children: ReactNode }) {

@@ -1,7 +1,7 @@
 """Delete my account (tasks 1.7.1 and 1.7.2): the person is anonymised, other people's records stay correct.
 
 The rule being tested (Appendix B, B.6):
-  * the row stays as "Deleted user", the username is retired, the phone number is free again;
+  * the row stays as "Deleted user", the username is retired, the email address is free again;
   * refused until the person is settled up everywhere, and while they own a space that has other people in it;
   * a space only they are in goes with them; payments waiting on them are taken back;
   * the password is asked for again, and wrong guesses count like wrong sign-ins.
@@ -25,7 +25,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.services.account_service import DELETED_NAME
 from tests import helpers
-from tests.helpers import PASSWORD, PHONES, add_expense, add_settlement, auth, create_space, db_all, error_code, register, start_signup
+from tests.helpers import PASSWORD, EMAILS, add_expense, add_settlement, auth, create_space, db_all, error_code, register, start_signup
 
 
 @pytest.fixture
@@ -74,12 +74,14 @@ def test_deleting_the_account_ends_every_way_back_in(client, users):
 
 def test_the_row_is_anonymised_and_nothing_personal_is_left(client, users):
     before = row("carol")
-    assert before.phone == "+919876543213" and before.deleted_at is None
+    assert before.email == "carol@example.com" and before.deleted_at is None
 
     delete_me(client, users["carol"])
 
     after = row("carol")
-    assert (after.username, after.name, after.phone, after.notifications_on) == ("carol", DELETED_NAME, None, False)
+    assert (after.username, after.name, after.email, after.notifications_on) == (
+        "carol", DELETED_NAME, "deleted:carol@example.invalid", False
+    )  # a unique placeholder nobody can sign up with
     assert after.deleted_at is not None
     assert after.password_hash != before.password_hash
     from app.utils import security
@@ -98,23 +100,23 @@ def test_their_cards_sessions_and_reset_records_are_removed(client, users):
     assert db_all(select(LoginAttempt).where(LoginAttempt.username == "carol")) == []
 
 
-def test_the_username_is_retired_and_the_phone_number_is_free_again(client, users):
+def test_the_username_is_retired_and_the_email_address_is_free_again(client, users):
     delete_me(client, users["carol"])
-    helpers.rewind(PendingSignup, 60)  # the 30-second wait between texts to one number has passed
+    helpers.rewind(PendingSignup, 60)  # the 30-second wait between emails to one address has passed
 
     assert client.get("/auth/check-username", params={"username": "carol"}).json()["available"] is False
-    assert start_signup(client, "carol", "+919000000111").status_code == 409  # nobody can take the old username
-    assert client.get("/auth/check-phone", params={"phone": PHONES["carol"]}).json()["available"] is True
-    reused = register(client, "carol2", PHONES["carol"])  # the number belongs to a new account now
-    assert client.get("/users/me", headers=auth(reused)).json()["phone"] == "+919876543213"
-    assert row("carol").phone is None  # and the old row was not touched by that
+    assert start_signup(client, "carol", "carol.other@example.com").status_code == 409  # nobody can take the old username
+    assert client.get("/auth/check-email", params={"email": EMAILS["carol"]}).json()["available"] is True
+    reused = register(client, "carol2", EMAILS["carol"])  # the address belongs to a new account now
+    assert client.get("/users/me", headers=auth(reused)).json()["email"] == "carol@example.com"
+    assert row("carol").email == "deleted:carol@example.invalid"  # and the old row was not touched by that
 
 
 def test_a_deleted_account_cannot_be_found_or_added(client, users):
     delete_me(client, users["carol"])
 
     assert client.get("/users/search", params={"q": "carol"}, headers=auth(users["alice"])).json() == []
-    assert client.get("/users/search", params={"q": "+919876543213"}, headers=auth(users["alice"])).json() == []
+    assert client.get("/users/search", params={"q": "carol@example.com"}, headers=auth(users["alice"])).json() == []
     added = client.post("/spaces", json={"name": "Trip", "icon": "trip", "usernames": ["carol"]}, headers=auth(users["alice"]))
     assert added.status_code == 422 and error_code(added) == "unknown_usernames"
     space = create_space(client, users["alice"], "Flat", ["bob"])
@@ -131,12 +133,12 @@ def test_forgot_password_treats_a_deleted_account_like_one_that_never_existed(cl
 
     assert deleted.status_code == never.status_code == 202
     assert set(deleted.json()) == set(never.json())
-    assert helpers.OUTBOX == []  # nothing was texted, and the old number was not given away
+    assert helpers.OUTBOX == []  # nothing was emailed, and the old address was not given away
 
 
 def test_an_old_reset_code_cannot_bring_a_deleted_account_back(client, users):
     started = client.post("/auth/forgot", json={"username": "carol"})
-    verified = client.post("/auth/verify-otp", json={"reset_id": started.json()["reset_id"], "code": helpers.last_code(PHONES["carol"])})
+    verified = client.post("/auth/verify-otp", json={"reset_id": started.json()["reset_id"], "code": helpers.last_code(EMAILS["carol"])})
     token = verified.json()["reset_token"]
     delete_me(client, users["carol"])
 

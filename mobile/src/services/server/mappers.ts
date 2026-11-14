@@ -18,7 +18,7 @@ import {
 // ---- the backend's JSON (snake_case), as documented in the plan's "Backend contract" table ----
 
 export type PersonDto = { username: string; name: string };
-export type MeDto = PersonDto & { phone: string; currency: string };
+export type MeDto = PersonDto & { email: string; currency: string };
 export type SpaceCardDto = {
   id: number;
   name: string;
@@ -118,13 +118,13 @@ export function plateOf(username: string, position?: number): User['plate'] {
   return ((n % 6) + 1) as User['plate'];
 }
 
-/** `phone` is only known for the signed-in user. */
-export const toUser = (p: PersonDto, o: { position?: number; phone?: string } = {}): User => ({
+/** `email` is only known for the signed-in user. */
+export const toUser = (p: PersonDto, o: { position?: number; email?: string } = {}): User => ({
   id: p.username,
   username: p.username,
   name: p.name,
-  phone: o.phone ?? null,
-  phoneVerified: true,
+  email: o.email ?? null,
+  emailVerified: true,
   avatarUrl: null,
   plate: plateOf(p.username, o.position),
 });
@@ -206,7 +206,7 @@ export function toSpaceDetail(d: SpaceDetailDto, me: User) {
     serial: d.id,
     createdAt: ms(d.created_at),
   };
-  const members = d.members.map((m) => toUser(m, { position: m.position, phone: m.username === me.username ? (me.phone ?? undefined) : undefined }));
+  const members = d.members.map((m) => toUser(m, { position: m.position, email: m.username === me.username ? (me.email ?? undefined) : undefined }));
 
   // The viewer's side of each pairwise line (+ = they owe the viewer), in member order, then anyone who has left with a
   // balance still open (the server lists only open pairs).

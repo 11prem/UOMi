@@ -26,7 +26,7 @@ def test_the_name_can_be_changed_and_is_tidied(client, users):
     response = update(client, users["alice"], name="  Alice   Rao ")
 
     assert response.status_code == 200
-    assert response.json() == {"username": "alice", "name": "Alice Rao", "phone": "+919876543210", "currency": "INR", "notifications_on": True}
+    assert response.json() == {"username": "alice", "name": "Alice Rao", "email": "alice@example.com", "currency": "INR", "notifications_on": True}
     assert me(client, users["alice"])["name"] == "Alice Rao"
 
 
@@ -51,8 +51,8 @@ def test_an_empty_or_unstorable_name_is_refused(client, users, name):
     assert me(client, users["alice"])["name"] == "Alice"
 
 
-@pytest.mark.parametrize("field, value", [("username", "alice2"), ("phone", "+919876543299"), ("password_hash", "x"), ("theme", "dark")])
-def test_the_username_the_phone_and_anything_else_cannot_be_set_here(client, users, field, value):
+@pytest.mark.parametrize("field, value", [("username", "alice2"), ("email", "someone.else@example.com"), ("password_hash", "x"), ("theme", "dark")])
+def test_the_username_the_email_and_anything_else_cannot_be_set_here(client, users, field, value):
     response = update(client, users["alice"], **{field: value})
 
     assert response.status_code == 422 and error_code(response) == "validation_error"
@@ -105,7 +105,7 @@ def test_the_switch_must_be_a_real_true_or_false(client, users, value):
 def test_a_field_left_out_or_null_is_left_alone_and_everything_can_go_in_one_request(client, users):
     assert update(client, users["alice"]).status_code == 200  # nothing to change is not an error
     update(client, users["alice"], name=None, currency=None, notifications_on=None)
-    assert me(client, users["alice"]) == {"username": "alice", "name": "Alice", "phone": "+919876543210", "currency": "INR", "notifications_on": True}
+    assert me(client, users["alice"]) == {"username": "alice", "name": "Alice", "email": "alice@example.com", "currency": "INR", "notifications_on": True}
 
     changed = update(client, users["alice"], name="Alice Rao", currency="GBP", notifications_on=False).json()
     assert (changed["name"], changed["currency"], changed["notifications_on"]) == ("Alice Rao", "GBP", False)

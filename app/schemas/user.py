@@ -9,7 +9,7 @@ from app.currencies import SUPPORTED_CURRENCIES
 from app.utils.validators import (
     MAX_PERSON_NAME,
     clean_name,
-    normalize_phone,
+    normalize_email,
     reject_nul,
     passwords_match,
     validate_new_username,
@@ -22,14 +22,14 @@ from app.utils.validators import (
 
 
 class RegisterRequest(BaseModel):
-    """Create Account screen (specs § 4.2): username (unique), name, phone, password, confirm.
+    """Create Account screen (specs § 4.2): username (unique), name, email, password, confirm.
 
-    Sending it starts the sign-up and texts a code. The account exists only after the code is accepted (§ 4.3).
+    Sending it starts the sign-up and emails a code. The account exists only after the code is accepted (§ 4.3).
     """
 
     username: str = Field(max_length=50)
     name: str = Field(min_length=1, max_length=500)  # a guard against huge bodies; the validator enforces 1-50
-    phone: str = Field(max_length=30)
+    email: str = Field(max_length=300)  # a guard against huge bodies; the validator enforces 254
     password: str = Field(max_length=128)
     confirm_password: str = Field(max_length=128)
 
@@ -43,10 +43,10 @@ class RegisterRequest(BaseModel):
     def check_name(cls, v: str) -> str:
         return clean_name(v, MAX_PERSON_NAME)
 
-    @field_validator("phone")
+    @field_validator("email")
     @classmethod
-    def check_phone(cls, v: str) -> str:
-        return normalize_phone(v)
+    def check_email(cls, v: str) -> str:
+        return normalize_email(v)
 
     @field_validator("password")
     @classmethod
@@ -101,7 +101,7 @@ class MessageOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Verify phone (specs § 4.3) and the shared code screen (§ 3.4)
+# Verify email (specs § 4.3) and the shared code screen (§ 3.4)
 # ---------------------------------------------------------------------------
 
 # ASCII digits only: in a pattern, `\d` also matches digits of other scripts.
@@ -109,16 +109,16 @@ CODE_PATTERN = r"^[0-9]+$"
 
 
 class SignupStarted(BaseModel):
-    """The sign-up is waiting for the code that was just texted. No account exists yet."""
+    """The sign-up is waiting for the code that was just emailed. No account exists yet."""
 
     pending_id: str  # keep it: the code screen sends it back with the code, and "resend" uses it
-    masked_phone: str  # "+91 80******31", for "We sent a 6-digit code to ..."
+    masked_email: str  # "ka*****@example.com", for "We sent a 6-digit code to ..."
     expires_in_seconds: int  # how long the code is valid
     resend_after_seconds: int  # when "Resend code" may be used
 
 
 class VerifySignupRequest(BaseModel):
-    """Verify phone: the id from the sign-up and the 6-digit code."""
+    """Verify email: the id from the sign-up and the 6-digit code."""
 
     pending_id: str = Field(min_length=1, max_length=60)
     code: str = Field(pattern=CODE_PATTERN, min_length=4, max_length=10)
@@ -152,12 +152,12 @@ class AvailabilityOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Forgot password (specs § 4.5): username, then the masked phone and code, then the new password
+# Forgot password (specs § 4.5): username, then the masked email and code, then the new password
 # ---------------------------------------------------------------------------
 
 
 class ForgotRequest(BaseModel):
-    """Forgot Password, step a: the username. Its phone number gets the code."""
+    """Forgot Password, step a: the username. Its email address gets the code."""
 
     username: str = Field(min_length=1, max_length=50)
 
@@ -175,7 +175,7 @@ class ForgotResponse(BaseModel):
     """Always the same shape, whether or not the username exists (so it cannot be used to find out who has one)."""
 
     reset_id: str  # keep it: the code screen sends it back with the code, and "resend" uses it
-    masked_phone: str  # "+91 80******31", for "We sent a 6-digit code to ..."
+    masked_email: str  # "ka*****@example.com", for "We sent a 6-digit code to ..."
     message: str
     expires_in_seconds: int  # how long the code is valid
     resend_after_seconds: int  # when "Resend code" may be used again
@@ -231,7 +231,7 @@ class ResetOut(BaseModel):
 
 
 class UserSummary(BaseModel):
-    """Public view of a person. Never includes the phone number."""
+    """Public view of a person. Never includes the email address."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -240,13 +240,13 @@ class UserSummary(BaseModel):
 
 
 class UserMe(BaseModel):
-    """GET /users/me: the signed-in person's own profile, so the phone is theirs to see."""
+    """GET /users/me: the signed-in person's own profile, so the email is theirs to see."""
 
     model_config = ConfigDict(from_attributes=True)
 
     username: str
     name: str
-    phone: str  # E.164
+    email: str
     currency: str  # their default currency, used for a new space when none is picked
     notifications_on: bool  # the Profile page's switch; whether pushes may be sent
 
@@ -260,7 +260,7 @@ class DeleteAccountRequest(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    """Profile, Export my data: the password is asked for again, because the file holds the whole ledger and a phone number."""
+    """Profile, Export my data: the password is asked for again, because the file holds the whole ledger and an email address."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -289,7 +289,7 @@ class DeviceIn(DeviceRemove):
 class UserUpdate(BaseModel):
     """Profile, Edit and the preferences (specs § 13): any of these. A field left out, or null, stays as it is.
 
-    The username and the phone number cannot be changed, so sending them is an error rather than being ignored.
+    The username and the email address cannot be changed, so sending them is an error rather than being ignored.
     The theme is not here: it stays on the phone.
     """
 

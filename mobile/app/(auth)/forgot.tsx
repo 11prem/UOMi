@@ -22,7 +22,7 @@ export default function Forgot() {
   );
 }
 
-/** Forgot password, step 1 (specs § 4.5a): the username; the code goes to the phone on that account. */
+/** Forgot password, step 1 (specs § 4.5a): the username; the code goes to the email on that account. */
 function ForgotForm() {
   const { colors, type, space } = useTheme();
   const services = useServices();
@@ -30,8 +30,8 @@ function ForgotForm() {
 
   const submit = form.handleSubmit(async ({ username }) => {
     try {
-      const { resetId, maskedPhone } = await services.auth.requestResetOtp(username);
-      router.push({ pathname: '/forgot-otp', params: { resetId, maskedPhone } });
+      const { resetId, maskedEmail } = await services.auth.requestResetOtp(username);
+      router.push({ pathname: '/forgot-otp', params: { resetId, maskedEmail } });
     } catch (e) {
       if (e instanceof AppError && e.code === 'unknown_username') form.setError('username', { message: e.message }, { shouldFocus: true });
       else toast(e instanceof Error ? e.message : 'Something went wrong');
@@ -41,7 +41,7 @@ function ForgotForm() {
   return (
     <Screen header={<AppBar title="Forgot password" />}>
       <View style={{ paddingTop: space.s2, gap: space.s4 }}>
-        <Text style={[type.body, { color: colors.ink }]}>Enter your username. We’ll text a code to the phone number on your account.</Text>
+        <Text style={[type.body, { color: colors.ink }]}>Enter your username. We’ll email a code to the address on your account.</Text>
         <FormInput
           form={form}
           name="username"

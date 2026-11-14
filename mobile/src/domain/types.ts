@@ -15,8 +15,8 @@ export const UserSchema = z.object({
   id: z.string(),
   username: z.string(),
   name: z.string(),
-  phone: z.string().nullable(),
-  phoneVerified: z.boolean(),
+  email: z.string().nullable(),
+  emailVerified: z.boolean(),
   avatarUrl: z.string().nullable(),
   plate: z.literal([1, 2, 3, 4, 5, 6]),
 });

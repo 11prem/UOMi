@@ -1,7 +1,7 @@
 """Sign up, sign in, refresh and logout."""
 
 from app.config import settings
-from tests.helpers import PASSWORD, PHONES, auth, error_code, last_code, register, register_payload
+from tests.helpers import PASSWORD, EMAILS, auth, error_code, last_code, register, register_payload
 
 LOGIN_MAX = settings.LOGIN_MAX_ATTEMPTS
 
@@ -21,31 +21,31 @@ def test_register_returns_tokens_and_the_timeouts(client):
     assert client.get("/spaces", headers=auth(tokens)).status_code == 200
 
 
-def test_register_cleans_up_username_and_phone(client):
-    started = client.post("/auth/register", json=register_payload(username="  Alice ", phone="+91 98765-43210"))
+def test_register_cleans_up_username_and_email(client):
+    started = client.post("/auth/register", json=register_payload(username="  Alice ", email="  Alice@Example.COM "))
     assert started.status_code == 202
     verified = client.post(
-        "/auth/register/verify", json={"pending_id": started.json()["pending_id"], "code": last_code(PHONES["alice"])}
+        "/auth/register/verify", json={"pending_id": started.json()["pending_id"], "code": last_code(EMAILS["alice"])}
     )
     assert verified.status_code == 201
     assert login(client, "alice").status_code == 200
-    # the cleaned-up phone is what is stored, so the plain number is now taken
+    # the cleaned-up (lowercase) email is what is stored, so the plain address is now taken
     again = client.post("/auth/register", json=register_payload(username="alice2"))
-    assert again.status_code == 409 and error_code(again) == "phone_taken"
+    assert again.status_code == 409 and error_code(again) == "email_taken"
 
 
 def test_duplicate_username_is_409(client):
     register(client, "alice")
-    response = client.post("/auth/register", json=register_payload(username="ALICE", phone=PHONES["bob"]))
+    response = client.post("/auth/register", json=register_payload(username="ALICE", email=EMAILS["bob"]))
     assert response.status_code == 409
     assert error_code(response) == "username_taken"
 
 
-def test_duplicate_phone_is_409(client):
+def test_duplicate_email_is_409(client):
     register(client, "alice")
     response = client.post("/auth/register", json=register_payload(username="bob"))
     assert response.status_code == 409
-    assert error_code(response) == "phone_taken"
+    assert error_code(response) == "email_taken"
 
 
 def test_register_rejects_bad_input(client):
@@ -54,7 +54,7 @@ def test_register_rejects_bad_input(client):
         register_payload(password="short1", confirm_password="short1"),  # too short
         register_payload(username="a b"),  # space in the username
         register_payload(username="ab"),  # too short
-        register_payload(phone="12345"),  # not a phone number
+        register_payload(email="alice.example.com"),  # not an email address
         register_payload(name="   "),  # empty name
     ]
     for payload in bad_payloads:

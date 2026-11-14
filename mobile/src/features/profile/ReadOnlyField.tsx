@@ -5,7 +5,7 @@ import { Icon } from '../../ui/Icon';
 import { size } from '../../ui/metrics';
 
 /**
- * A value the user can see but not change (Username, Phone number on Edit Profile): a lock beside it and a line saying
+ * A value the user can see but not change (Username, Email on Edit Profile): a lock beside it and a line saying
  * why. The kit has no read-only field; this is `TextField`'s box with the input swapped for text.
  */
 export function ReadOnlyField({ label, value, why }: { label: string; value: string; why: string }) {

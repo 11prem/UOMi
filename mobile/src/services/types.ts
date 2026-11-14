@@ -20,7 +20,7 @@ import type {
 export interface Services {
   mode: 'demo' | 'server';
   auth: {
-    signUp(i: { username: string; name: string; phone: string; password: string }): Promise<{ pendingId: string; maskedPhone: string }>;
+    signUp(i: { username: string; name: string; email: string; password: string }): Promise<{ pendingId: string; maskedEmail: string }>;
     verifySignUpOtp(pendingId: string, code: string): Promise<User>;
     /** `ref` is a `pendingId` or a `resetId`. */
     resendOtp(ref: string): Promise<{ resendAfterSeconds: number }>;
@@ -30,8 +30,8 @@ export interface Services {
     restore(): Promise<User | null>;
     /** Both resolve to `true` when the value is FREE to register ("✓ available"), `false` when taken. */
     checkUsername(u: string): Promise<boolean>;
-    checkPhone(e164: string): Promise<boolean>;
-    requestResetOtp(username: string): Promise<{ resetId: string; maskedPhone: string }>;
+    checkEmail(email: string): Promise<boolean>;
+    requestResetOtp(username: string): Promise<{ resetId: string; maskedEmail: string }>;
     verifyResetOtp(resetId: string, code: string): Promise<{ resetToken: string }>;
     resetPassword(resetToken: string, newPassword: string): Promise<{ username: string }>;
   };

@@ -6,7 +6,7 @@ import { size } from './metrics';
 
 export type TextFieldProps = Omit<TextInputProps, 'style'> &
   Omit<FieldProps, 'children' | 'nativeID'> & {
-    /** Content inside the border, before the input (the phone field's country prefix). */
+    /** Content inside the border, before the input (a member's plate, say). */
     left?: ReactNode;
     /** A control inside the right edge of the input (the password eye). */
     right?: ReactNode;

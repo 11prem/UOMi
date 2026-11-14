@@ -1,6 +1,7 @@
 """Keep what people type into search out of the access log (Phase 2, task 2.8).
 
-`GET /users/search?q=9876543210` would otherwise write a full phone number into every access-log line.
+`GET /users/search?q=kabir` would otherwise write what a person typed into every access-log line; so would
+`GET /auth/check-email?email=...` an email address.
 The values of these query parameters are replaced with `[redacted]` before the line is written.
 """
 
@@ -10,10 +11,9 @@ import re
 REDACTED = "[redacted]"
 
 # Query parameters whose values never reach the log. When you add an endpoint that takes something private in
-# its query string (an email, a phone number, a token), add the parameter's name here.
+# its query string (an email, a token), add the parameter's name here.
 SENSITIVE_QUERY_PARAMS = (
     "q",
-    "phone",
     "email",
     "code",
     "otp",

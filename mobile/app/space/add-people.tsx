@@ -26,7 +26,7 @@ import { toast } from '../../src/ui/Toast';
 import { useDiscardGuard } from '../../src/ui/useDiscardGuard';
 
 /**
- * Create Space step 2 (specs § 6.2; app.js `R.addPeople`): search by whole phone number or username prefix 300 ms after
+ * Create Space step 2 (specs § 6.2; app.js `R.addPeople`): search by username prefix 300 ms after
  * typing stops, a numbered members list with "You" first, ✓ once someone else is added. Back keeps the pop-up's draft.
  */
 export default function AddPeople() {
@@ -115,8 +115,8 @@ export default function AddPeople() {
         label="Find people"
         value={text}
         onChangeText={setText}
-        placeholder="Phone number or username"
-        helper="Search a whole phone number or a username."
+        placeholder="Username"
+        helper="Search by username."
         autoCapitalize="none"
         autoCorrect={false}
         autoComplete="off"

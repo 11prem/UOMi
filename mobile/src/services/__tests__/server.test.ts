@@ -51,7 +51,7 @@ function fakeFetch(handler: (c: Call) => Reply | Promise<Reply>) {
 const fail = (status: number, code: string, message: string, extra: object = {}): Reply => ({ status, body: { detail: { code, message, ...extra } } });
 const pair = (n: number) => ({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, token_type: 'bearer', expires_in: 900, idle_timeout_seconds: 600 });
 const tokens = (n: number, lastRequestAt = NOW): StoredTokens => ({ access: `access-${n}`, refresh: `refresh-${n}`, lastRequestAt, idleSeconds: 600 });
-const ME = { username: 'kabir.r', name: 'Kabir Rao', phone: '+919845012331', currency: 'INR' };
+const ME = { username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', currency: 'INR' };
 
 function make(handler: (c: Call) => Reply | Promise<Reply>, store = memoryStore(tokens(1)), baseUrl = BASE) {
   const { fetchImpl, calls } = fakeFetch(handler);
@@ -168,7 +168,7 @@ describe('sign in, restore, sign out', () => {
       memoryStore(),
     );
     const user = await svc.auth.signIn('kabir.r', 'demo1234');
-    expect(user).toEqual({ id: 'kabir.r', username: 'kabir.r', name: 'Kabir Rao', phone: '+919845012331', phoneVerified: true, avatarUrl: null, plate: 4 });
+    expect(user).toEqual({ id: 'kabir.r', username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', emailVerified: true, avatarUrl: null, plate: 4 });
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /auth/login', 'GET /users/me']);
     expect(calls[0].body).toEqual({ username: 'kabir.r', password: 'demo1234' });
     expect(bearer(calls[0])).toBeUndefined();
@@ -494,13 +494,13 @@ describe('spaces', () => {
     expect(calls.map((c) => c.path)).toContain('/spaces/2');
 
     expect(space).toEqual({ id: '2', name: 'Goa Trip', icon: 'trip', currency: 'INR', ownerId: 'arun.n', memberIds: ['kabir.r', 'arun.n', 'swetha.i', 'priya.m'], serial: 2, createdAt: Date.parse('2026-10-01T06:00:00.123Z') });
-    expect(members.map((m) => [m.id, m.plate, m.phone])).toEqual([
-      ['kabir.r', 1, '+919845012331'], // plate = ((position − 1) % 6) + 1; the phone is only known for the viewer
+    expect(members.map((m) => [m.id, m.plate, m.email])).toEqual([
+      ['kabir.r', 1, 'kabir.r@example.com'], // plate = ((position − 1) % 6) + 1; the email is only known for the viewer
       ['arun.n', 2, null],
       ['swetha.i', 3, null],
       ['priya.m', 4, null],
     ]);
-    expect(members[1]).toEqual({ id: 'arun.n', username: 'arun.n', name: 'Arun Nair', phone: null, phoneVerified: true, avatarUrl: null, plate: 2 });
+    expect(members[1]).toEqual({ id: 'arun.n', username: 'arun.n', name: 'Arun Nair', email: null, emailVerified: true, avatarUrl: null, plate: 2 });
 
     // + = they owe the viewer; lines that do not involve the viewer are left out; member order.
     expect(balance).toEqual({
@@ -625,21 +625,20 @@ describe('notifications and people', () => {
     expect(calls[1].body).toEqual({ read: true });
   });
 
-  it('search turns a digits query into the viewer’s E.164 number and sends anything else as typed', async () => {
+  it('search sends the username as typed, without a leading @, and nothing for a blank query', async () => {
     const { svc, calls } = make((c) => ({
-      body: c.path === '/users/me' ? ME : c.path.includes('rohan') || c.path.includes('%2B91') ? [{ username: 'rohan.d', name: 'Rohan Das', is_friend: true }] : [],
+      body: c.path === '/users/me' ? ME : c.path.includes('rohan') ? [{ username: 'rohan.d', name: 'Rohan Das', is_friend: true }] : [],
     }));
-    const found = await svc.users.search('98300 45566');
-    expect(found).toEqual([{ id: 'rohan.d', username: 'rohan.d', name: 'Rohan Das', phone: null, phoneVerified: true, avatarUrl: null, plate: expect.any(Number) }]);
+    const found = await svc.users.search('rohan');
+    expect(found).toEqual([{ id: 'rohan.d', username: 'rohan.d', name: 'Rohan Das', email: null, emailVerified: true, avatarUrl: null, plate: expect.any(Number) }]);
     expect(found[0].plate).toBeGreaterThanOrEqual(1);
     expect(found[0].plate).toBeLessThanOrEqual(6);
 
-    await svc.users.search('+971 50 123 4567');
-    await svc.users.search('123'); // not a whole valid number: sent as typed
+    await svc.users.search('98300 45566'); // digits are just a username prefix: no number parsing
     await svc.users.search('@roha');
     await svc.users.search('  ');
     const paths = calls.filter((c) => c.path.startsWith('/users/search')).map((c) => c.path);
-    expect(paths).toEqual(['/users/search?q=%2B919830045566', '/users/search?q=%2B971501234567', '/users/search?q=123', '/users/search?q=roha']);
+    expect(paths).toEqual(['/users/search?q=rohan', '/users/search?q=98300%2045566', '/users/search?q=roha']);
   });
 });
 
@@ -671,11 +670,11 @@ describe('profile and the operations the server cannot do yet', () => {
     const { svc, calls } = make(() => ({ body: ME }));
     const expenseInput = { spaceId: '1', description: 'x', amountMinor: 100, paidBy: 'kabir.r', splitType: 'equal' as const, shares: [], date: NOW };
     const all: [string, () => Promise<unknown>][] = [
-      ['auth.signUp', () => svc.auth.signUp({ username: 'a', name: 'A', phone: '+919845012331', password: 'x' })],
+      ['auth.signUp', () => svc.auth.signUp({ username: 'a', name: 'A', email: 'a@example.com', password: 'x' })],
       ['auth.verifySignUpOtp', () => svc.auth.verifySignUpOtp('p', '123456')],
       ['auth.resendOtp', () => svc.auth.resendOtp('p')],
       ['auth.checkUsername', () => svc.auth.checkUsername('a')],
-      ['auth.checkPhone', () => svc.auth.checkPhone('+919845012331')],
+      ['auth.checkEmail', () => svc.auth.checkEmail('a@example.com')],
       ['auth.requestResetOtp', () => svc.auth.requestResetOtp('a')],
       ['auth.verifyResetOtp', () => svc.auth.verifyResetOtp('r', '123456')],
       ['auth.resetPassword', () => svc.auth.resetPassword('t', 'x')],

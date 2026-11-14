@@ -594,6 +594,10 @@
             "title": "Currency",
             "type": "string"
           },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -601,10 +605,6 @@
           "notifications_on": {
             "title": "Notifications On",
             "type": "boolean"
-          },
-          "phone": {
-            "title": "Phone",
-            "type": "string"
           },
           "username": {
             "title": "Username",
@@ -614,7 +614,7 @@
         "required": [
           "username",
           "name",
-          "phone",
+          "email",
           "currency",
           "notifications_on",
           "created_at"
@@ -624,7 +624,7 @@
       },
       "ExportRequest": {
         "additionalProperties": false,
-        "description": "Profile, Export my data: the password is asked for again, because the file holds the whole ledger and a phone number.",
+        "description": "Profile, Export my data: the password is asked for again, because the file holds the whole ledger and an email address.",
         "properties": {
           "password": {
             "maxLength": 128,
@@ -740,7 +740,7 @@
         "type": "object"
       },
       "ForgotRequest": {
-        "description": "Forgot Password, step a: the username. Its phone number gets the code.",
+        "description": "Forgot Password, step a: the username. Its email address gets the code.",
         "properties": {
           "username": {
             "maxLength": 50,
@@ -762,8 +762,8 @@
             "title": "Expires In Seconds",
             "type": "integer"
           },
-          "masked_phone": {
-            "title": "Masked Phone",
+          "masked_email": {
+            "title": "Masked Email",
             "type": "string"
           },
           "message": {
@@ -781,7 +781,7 @@
         },
         "required": [
           "reset_id",
-          "masked_phone",
+          "masked_email",
           "message",
           "expires_in_seconds",
           "resend_after_seconds"
@@ -1155,11 +1155,16 @@
         "type": "object"
       },
       "RegisterRequest": {
-        "description": "Create Account screen (specs § 4.2): username (unique), name, phone, password, confirm.\n\nSending it starts the sign-up and texts a code. The account exists only after the code is accepted (§ 4.3).",
+        "description": "Create Account screen (specs § 4.2): username (unique), name, email, password, confirm.\n\nSending it starts the sign-up and emails a code. The account exists only after the code is accepted (§ 4.3).",
         "properties": {
           "confirm_password": {
             "maxLength": 128,
             "title": "Confirm Password",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 300,
+            "title": "Email",
             "type": "string"
           },
           "name": {
@@ -1173,11 +1178,6 @@
             "title": "Password",
             "type": "string"
           },
-          "phone": {
-            "maxLength": 30,
-            "title": "Phone",
-            "type": "string"
-          },
           "username": {
             "maxLength": 50,
             "title": "Username",
@@ -1187,7 +1187,7 @@
         "required": [
           "username",
           "name",
-          "phone",
+          "email",
           "password",
           "confirm_password"
         ],
@@ -1495,14 +1495,14 @@
         "type": "string"
       },
       "SignupStarted": {
-        "description": "The sign-up is waiting for the code that was just texted. No account exists yet.",
+        "description": "The sign-up is waiting for the code that was just emailed. No account exists yet.",
         "properties": {
           "expires_in_seconds": {
             "title": "Expires In Seconds",
             "type": "integer"
           },
-          "masked_phone": {
-            "title": "Masked Phone",
+          "masked_email": {
+            "title": "Masked Email",
             "type": "string"
           },
           "pending_id": {
@@ -1516,7 +1516,7 @@
         },
         "required": [
           "pending_id",
-          "masked_phone",
+          "masked_email",
           "expires_in_seconds",
           "resend_after_seconds"
         ],
@@ -1915,10 +1915,14 @@
         "type": "object"
       },
       "UserMe": {
-        "description": "GET /users/me: the signed-in person's own profile, so the phone is theirs to see.",
+        "description": "GET /users/me: the signed-in person's own profile, so the email is theirs to see.",
         "properties": {
           "currency": {
             "title": "Currency",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
             "type": "string"
           },
           "name": {
@@ -1929,10 +1933,6 @@
             "title": "Notifications On",
             "type": "boolean"
           },
-          "phone": {
-            "title": "Phone",
-            "type": "string"
-          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -1941,7 +1941,7 @@
         "required": [
           "username",
           "name",
-          "phone",
+          "email",
           "currency",
           "notifications_on"
         ],
@@ -1973,7 +1973,7 @@
         "type": "object"
       },
       "UserSummary": {
-        "description": "Public view of a person. Never includes the phone number.",
+        "description": "Public view of a person. Never includes the email address.",
         "properties": {
           "name": {
             "title": "Name",
@@ -1993,7 +1993,7 @@
       },
       "UserUpdate": {
         "additionalProperties": false,
-        "description": "Profile, Edit and the preferences (specs § 13): any of these. A field left out, or null, stays as it is.\n\nThe username and the phone number cannot be changed, so sending them is an error rather than being ignored.\nThe theme is not here: it stays on the phone.",
+        "description": "Profile, Edit and the preferences (specs § 13): any of these. A field left out, or null, stays as it is.\n\nThe username and the email address cannot be changed, so sending them is an error rather than being ignored.\nThe theme is not here: it stays on the phone.",
         "properties": {
           "currency": {
             "anyOf": [
@@ -2117,7 +2117,7 @@
         "type": "object"
       },
       "VerifySignupRequest": {
-        "description": "Verify phone: the id from the sign-up and the 6-digit code.",
+        "description": "Verify email: the id from the sign-up and the 6-digit code.",
         "properties": {
           "code": {
             "maxLength": 10,
@@ -2154,18 +2154,18 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/auth/check-phone": {
+    "/auth/check-email": {
       "get": {
-        "description": "Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address.",
-        "operationId": "check_phone_auth_check_phone_get",
+        "description": "Is this email free? Tells anyone whether an address has an account, so it has a tight limit per address.",
+        "operationId": "check_email_auth_check_email_get",
         "parameters": [
           {
             "in": "query",
-            "name": "phone",
+            "name": "email",
             "required": true,
             "schema": {
-              "maxLength": 30,
-              "title": "Phone",
+              "maxLength": 300,
+              "title": "Email",
               "type": "string"
             }
           }
@@ -2192,7 +2192,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Check Phone",
+        "summary": "Check Email",
         "tags": [
           "auth"
         ]
@@ -2244,7 +2244,7 @@
     },
     "/auth/forgot": {
       "post": {
-        "description": "Forgot Password: a username -> a code is texted to its phone, and the masked number comes back.\n\nThe reply has the same shape for a username that does not exist.",
+        "description": "Forgot Password: a username -> a code is emailed to its address, and the masked email comes back.\n\nThe reply has the same shape for a username that does not exist.",
         "operationId": "forgot_auth_forgot_post",
         "requestBody": {
           "content": {
@@ -2432,7 +2432,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "Create Account -> Verify phone. Texts a code; the account does NOT exist until `/auth/register/verify`.",
+        "description": "Create Account -> Verify email. Emails a code; the account does NOT exist until `/auth/register/verify`.",
         "operationId": "register_auth_register_post",
         "requestBody": {
           "content": {
@@ -2474,7 +2474,7 @@
     },
     "/auth/register/verify": {
       "post": {
-        "description": "Verify phone -> Home Page. The right code creates the account and signs the new user straight in.",
+        "description": "Verify email -> Home Page. The right code creates the account and signs the new user straight in.",
         "operationId": "register_verify_auth_register_verify_post",
         "requestBody": {
           "content": {
@@ -3991,7 +3991,7 @@
     },
     "/users/me": {
       "get": {
-        "description": "Who am I: the username, name, phone, default currency and notifications switch of the signed-in user.",
+        "description": "Who am I: the username, name, email, default currency and notifications switch of the signed-in user.",
         "operationId": "read_me_users_me_get",
         "responses": {
           "200": {
@@ -4228,16 +4228,16 @@
     },
     "/users/search": {
       "get": {
-        "description": "Add People page, live search: the app sends one request per pause in typing (300 ms).\n\nSearching is limited per address and per user. Looking someone up by a complete phone number is\nlimited much harder, because that is the lookup that can reveal who is registered: a person adding\nfriends needs a handful of these, a script testing numbers needs thousands.",
+        "description": "Add People page, live search: the app sends one request per pause in typing (300 ms).\n\nSearching is by username only, and is limited per address and per user.",
         "operationId": "search_users_users_search_get",
         "parameters": [
           {
-            "description": "Username, or a full phone number",
+            "description": "Username",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Username, or a full phone number",
+              "description": "Username",
               "maxLength": 50,
               "minLength": 1,
               "title": "Q",
