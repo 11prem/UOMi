@@ -10,6 +10,7 @@ from app.utils.validators import (
     MAX_PERSON_NAME,
     clean_name,
     normalize_email,
+    normalize_phone,
     reject_nul,
     passwords_match,
     validate_new_username,
@@ -22,13 +23,16 @@ from app.utils.validators import (
 
 
 class RegisterRequest(BaseModel):
-    """Create Account screen (specs § 4.2): username (unique), name, email, password, confirm.
+    """Create Account screen (specs § 4.2): username (unique), name, phone, email, password, confirm.
 
-    Sending it starts the sign-up and emails a code. The account exists only after the code is accepted (§ 4.3).
+    Sending it starts the sign-up and emails a code to the email. The account exists only after the code is accepted
+    (§ 4.3). The phone is collected and checked (a real mobile number, one account per number) but gets no code: it is
+    what people use to find each other when adding people to a space.
     """
 
     username: str = Field(max_length=50)
     name: str = Field(min_length=1, max_length=500)  # a guard against huge bodies; the validator enforces 1-50
+    phone: str = Field(max_length=30)
     email: str = Field(max_length=300)  # a guard against huge bodies; the validator enforces 254
     password: str = Field(max_length=128)
     confirm_password: str = Field(max_length=128)
@@ -42,6 +46,11 @@ class RegisterRequest(BaseModel):
     @classmethod
     def check_name(cls, v: str) -> str:
         return clean_name(v, MAX_PERSON_NAME)
+
+    @field_validator("phone")
+    @classmethod
+    def check_phone(cls, v: str) -> str:
+        return normalize_phone(v)
 
     @field_validator("email")
     @classmethod
@@ -157,9 +166,17 @@ class AvailabilityOut(BaseModel):
 
 
 class ForgotRequest(BaseModel):
-    """Forgot Password, step a: the username. Its email address gets the code."""
+    """Forgot Password, step a: the username and the email address on that account. When they belong together, a code is
+    emailed to that address. The reply is the same when they do not."""
 
     username: str = Field(min_length=1, max_length=50)
+    email: str = Field(min_length=1, max_length=300)
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        # Only the FORMAT is checked, with the same 422 for everybody. Whether it matches an account is never told.
+        return normalize_email(v)
 
     @field_validator("username")
     @classmethod
@@ -246,6 +263,7 @@ class UserMe(BaseModel):
 
     username: str
     name: str
+    phone: str | None  # empty for an account made before phone numbers came back
     email: str
     currency: str  # their default currency, used for a new space when none is picked
     notifications_on: bool  # the Profile page's switch; whether pushes may be sent

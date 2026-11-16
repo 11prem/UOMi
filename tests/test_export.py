@@ -39,7 +39,7 @@ def test_the_export_holds_the_profile_the_spaces_and_the_cards(client, users, fl
     body = response.json()
     assert set(body) == {"exported_at", "profile", "spaces", "expenses", "settlements", "notifications"}
     assert body["profile"] == {
-        "username": "alice", "name": "Alice", "email": "alice@example.com", "currency": "INR",
+        "username": "alice", "name": "Alice", "phone": "+919876543210", "email": "alice@example.com", "currency": "INR",
         "notifications_on": True, "created_at": body["profile"]["created_at"],
     }
     [space] = body["spaces"]

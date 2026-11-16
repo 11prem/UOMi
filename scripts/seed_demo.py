@@ -41,13 +41,13 @@ from app.utils.security import hash_password  # noqa: E402
 
 PASSWORD = "demo1234"
 
-USERS = [  # (username, name, default currency); the email is <username>@example.com. The prototype's u_kabir, u_swetha, u_arun, u_meera, u_rohan, u_priya
-    ("kabir.r", "Kabir Rao", "INR"),
-    ("swetha.i", "Swetha Iyer", "INR"),
-    ("arun.n", "Arun Nair", "INR"),
-    ("meera.s", "Meera Shah", "AED"),
-    ("rohan.d", "Rohan Das", "INR"),
-    ("priya.m", "Priya Menon", "INR"),
+USERS = [  # (username, name, phone, default currency); the email is <username>@example.com. The prototype's u_kabir, u_swetha, u_arun, u_meera, u_rohan, u_priya
+    ("kabir.r", "Kabir Rao", "+919845012331", "INR"),
+    ("swetha.i", "Swetha Iyer", "+919880213344", "INR"),
+    ("arun.n", "Arun Nair", "+919446078812", "INR"),
+    ("meera.s", "Meera Shah", "+971501234567", "AED"),
+    ("rohan.d", "Rohan Das", "+919830045566", "INR"),
+    ("priya.m", "Priya Menon", "+919567001122", "INR"),
 ]
 
 # (key, name, icon, currency, owner, members in list order, created N days ago)
@@ -111,11 +111,12 @@ def seed(db: Session) -> None:
         return now - timedelta(days=days)
 
     password_hash = hash_password(PASSWORD)
-    for username, name, currency in USERS:
+    for username, name, phone, currency in USERS:
         db.add(
             User(
                 username=username,
                 name=name,
+                phone=phone,
                 email=f"{username}@example.com",
                 password_hash=password_hash,
                 currency=currency,
@@ -219,7 +220,7 @@ def reset(db: Session) -> None:
     shortcut: a bill or payment by a demo user inside someone else's space is not removed, so deleting the user
     fails and nothing changes. The API cannot create those yet; handle them here when it can.
     """
-    names = [username for username, _, _ in USERS]
+    names = [username for username, _, _, _ in USERS]
     shared = db.scalars(
         select(Space.name)
         .join(SpaceMember, SpaceMember.space_id == Space.id)

@@ -55,7 +55,7 @@ How it was checked:
 2. Settlement endpoints: record, confirm, reject and cancel, plus their notifications.
 3. Space management: rename, change icon or currency, add or remove people, leave, delete.
 4. Transactions list, profile update and preferences.
-5. Sign-up email verification by OTP, and forgot-password by username with a masked email. Until these exist, the app disables Create Account and Forgot password in server mode.
+5. Sign-up email verification by OTP, and forgot-password by username and email with a masked email. Until these exist, the app disables Create Account and Forgot password in server mode.
 6. Before any public URL:
    - rate limits on register, search and forgot-password;
    - a real SMTP server (`EMAIL_BACKEND=smtp`) with sending limits;

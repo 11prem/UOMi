@@ -20,6 +20,7 @@ from app.schemas.user import UserSummary
 class ExportProfile(BaseModel):
     username: str
     name: str
+    phone: str | None  # the person's own number
     email: str  # the person's own address
     currency: str
     notifications_on: bool

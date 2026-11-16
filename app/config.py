@@ -83,8 +83,10 @@ class Settings(BaseSettings):
     # so it is kept much tighter than the username check.
     USERNAME_CHECK_MAX_PER_IP_PER_MINUTE: int = Field(default=60, ge=1)
     EMAIL_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
+    PHONE_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)  # the phone check, too, tells anyone whether a number has an account
     SEARCH_MAX_PER_USER_PER_MINUTE: int = Field(default=120, ge=1)
     SEARCH_MAX_PER_IP_PER_MINUTE: int = Field(default=240, ge=1)
+    PHONE_LOOKUPS_PER_USER_PER_HOUR: int = Field(default=20, ge=1)  # searches by a complete phone number
     # Most codes (emails) the whole API will create per UTC day, for every address together. A last-resort
     # brake on the email bill: also set a sending limit at the email provider. Trade-off: whoever uses the whole cap
     # up blocks password resets for everyone until UTC midnight, so size it well above real daily use.
@@ -95,6 +97,7 @@ class Settings(BaseSettings):
     TRUSTED_PROXY_COUNT: int = Field(default=0, ge=0)
 
     # --- Defaults ---
+    DEFAULT_COUNTRY_CODE: str = "+91"  # a phone number typed without a country code is read as this country's
     DEFAULT_CURRENCY: str = "INR"
 
     # --- Email ---

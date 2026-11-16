@@ -5,15 +5,16 @@ information in machine-readable form is in [`openapi.json`](openapi.json); gener
 from that (for example `npx openapi-typescript docs/openapi.json -o mobile/src/services/server/api-types.ts`).
 `tests/test_api_contract.py` fails when this file or `openapi.json` no longer matches the code.
 
-45 endpoints. Errors use the envelope in [`backend-api.md`](backend-api.md) (`{"detail": {"code", "message", ...}}`).
+46 endpoints. Errors use the envelope in [`backend-api.md`](backend-api.md) (`{"detail": {"code", "message", ...}}`).
 
 ## auth
 
 | Method | Path | Signed in | Body | Query | Success | What it does |
 |---|---|---|---|---|---|---|
 | GET | `/auth/check-email` | no | - | email | 200 AvailabilityOut | Is this email free? Tells anyone whether an address has an account, so it has a tight limit per address. |
+| GET | `/auth/check-phone` | no | - | phone | 200 AvailabilityOut | Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address. |
 | GET | `/auth/check-username` | no | - | username | 200 AvailabilityOut | The live "✓ available / ✗ taken" under the username field on Create Account. |
-| POST | `/auth/forgot` | no | ForgotRequest | - | 202 ForgotResponse | Forgot Password: a username -> a code is emailed to its address, and the masked email comes back. |
+| POST | `/auth/forgot` | no | ForgotRequest | - | 202 ForgotResponse | Forgot Password: a username and its email -> a code is emailed there, and the masked email comes back. |
 | POST | `/auth/login` | no | LoginRequest | - | 200 TokenPair | Sign In -> Home Page. Same error for a wrong username or password; 429 after too many tries. |
 | POST | `/auth/logout` | yes | - | - | 204 | Profile > Logout -> back to the Login Page. Ends this device's session. |
 | POST | `/auth/otp/resend` | no | ResendRequest | - | 200 ResendOut | "Resend code" on either code screen: send `pending_id` (sign-up) or `reset_id` (forgot password). |
@@ -84,7 +85,7 @@ from that (for example `npx openapi-typescript docs/openapi.json -o mobile/src/s
 
 | Method | Path | Signed in | Body | Query | Success | What it does |
 |---|---|---|---|---|---|---|
-| GET | `/users/me` | yes | - | - | 200 UserMe | Who am I: the username, name, email, default currency and notifications switch of the signed-in user. |
+| GET | `/users/me` | yes | - | - | 200 UserMe | Who am I: the username, name, phone, email, default currency and notifications switch of the signed-in user. |
 | PATCH | `/users/me` | yes | UserUpdate | - | 200 UserMe | Profile, Edit and the preferences: the name, the default currency and the notifications switch. |
 | POST | `/users/me/delete` | yes | DeleteAccountRequest | - | 204 | Profile, Delete my account: asks for the password again. Refused (403) until the person is settled up in every |
 | PUT | `/users/me/devices` | yes | DeviceIn | - | 204 | Save this phone's push token (call it on every launch). The phone belongs to this sign-in and goes when it does. |

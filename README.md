@@ -31,7 +31,7 @@ This repository holds the whole product: the Android app, the FastAPI backend, a
 - **Settle up with a confirmation.** One person records a payment, the other confirms or rejects it, and only confirmed payments change a balance.
 - **Clear balances.** Each person sees what they owe or are owed per space and overall. Different currencies are never added together, and the wording ("You owe ₹20 · Swetha") never depends on colour alone.
 - **Notifications and reminders.** Cards for new shares, payments to confirm, answers and additions, plus automatic payment reminders on days 3, 5, 7 and 10.
-- **Email verification.** Username and password. An emailed one-time code verifies a new account (it exists only after the code) and resets a forgotten password (by username, shown with a masked email like `ka*****@example.com`). People are found by username only. A 30-minute inactivity sign-out.
+- **Email verification.** Username and password. Sign-up collects name, username, phone, email and password; an emailed one-time code verifies a new account (it exists only after the code) and resets a forgotten password (asked for with the username and the email, and shown with a masked email like `ka*****@example.com`). The phone is checked and unique but gets no code. People are found by username or by a complete phone number. A 30-minute inactivity sign-out.
 - **Light and dark themes,** with the Fraunces typeface bundled in the app.
 
 Money is stored as whole minor units (paise, cents) everywhere. There are no floating-point amounts.
@@ -126,7 +126,7 @@ The APK lands in `dist\UOMi-<version>.apk`. The first build takes up to about 45
 ## Test
 
 ```bash
-pytest                         # backend, from the repository root: 751 tests on an in-memory database
+pytest                         # backend, from the repository root: 861 tests on an in-memory database
 cd mobile && npm test          # app: 334 tests in 20 suites
 cd mobile && npx tsc --noEmit  # app type check
 ```
@@ -135,7 +135,7 @@ cd mobile && npx tsc --noEmit  # app type check
 
 ```
 app/          FastAPI backend: models, schemas, routers, services, utils
-migrations/   Alembic migrations (0001 initial, 0002 spec alignment, payment reminders, refresh-token reuse, phone-verified sign-up, email instead of phone)
+migrations/   Alembic migrations (0001 initial, 0002 spec alignment, payment reminders, refresh-token reuse, phone-verified sign-up, email instead of phone, phone with email)
 scripts/      seed_demo.py, the demo data for the mobile app
 tests/        backend tests
 mobile/       the Expo / React Native app

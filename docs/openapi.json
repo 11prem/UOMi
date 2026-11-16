@@ -606,6 +606,17 @@
             "title": "Notifications On",
             "type": "boolean"
           },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -614,6 +625,7 @@
         "required": [
           "username",
           "name",
+          "phone",
           "email",
           "currency",
           "notifications_on",
@@ -740,8 +752,14 @@
         "type": "object"
       },
       "ForgotRequest": {
-        "description": "Forgot Password, step a: the username. Its email address gets the code.",
+        "description": "Forgot Password, step a: the username and the email address on that account. When they belong together, a code is\nemailed to that address. The reply is the same when they do not.",
         "properties": {
+          "email": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Email",
+            "type": "string"
+          },
           "username": {
             "maxLength": 50,
             "minLength": 1,
@@ -750,7 +768,8 @@
           }
         },
         "required": [
-          "username"
+          "username",
+          "email"
         ],
         "title": "ForgotRequest",
         "type": "object"
@@ -1155,7 +1174,7 @@
         "type": "object"
       },
       "RegisterRequest": {
-        "description": "Create Account screen (specs § 4.2): username (unique), name, email, password, confirm.\n\nSending it starts the sign-up and emails a code. The account exists only after the code is accepted (§ 4.3).",
+        "description": "Create Account screen (specs § 4.2): username (unique), name, phone, email, password, confirm.\n\nSending it starts the sign-up and emails a code to the email. The account exists only after the code is accepted\n(§ 4.3). The phone is collected and checked (a real mobile number, one account per number) but gets no code: it is\nwhat people use to find each other when adding people to a space.",
         "properties": {
           "confirm_password": {
             "maxLength": 128,
@@ -1178,6 +1197,11 @@
             "title": "Password",
             "type": "string"
           },
+          "phone": {
+            "maxLength": 30,
+            "title": "Phone",
+            "type": "string"
+          },
           "username": {
             "maxLength": 50,
             "title": "Username",
@@ -1187,6 +1211,7 @@
         "required": [
           "username",
           "name",
+          "phone",
           "email",
           "password",
           "confirm_password"
@@ -1933,6 +1958,17 @@
             "title": "Notifications On",
             "type": "boolean"
           },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -1941,6 +1977,7 @@
         "required": [
           "username",
           "name",
+          "phone",
           "email",
           "currency",
           "notifications_on"
@@ -2198,6 +2235,50 @@
         ]
       }
     },
+    "/auth/check-phone": {
+      "get": {
+        "description": "Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address.",
+        "operationId": "check_phone_auth_check_phone_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "phone",
+            "required": true,
+            "schema": {
+              "maxLength": 30,
+              "title": "Phone",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Phone",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/check-username": {
       "get": {
         "description": "The live \"✓ available / ✗ taken\" under the username field on Create Account.",
@@ -2244,7 +2325,7 @@
     },
     "/auth/forgot": {
       "post": {
-        "description": "Forgot Password: a username -> a code is emailed to its address, and the masked email comes back.\n\nThe reply has the same shape for a username that does not exist.",
+        "description": "Forgot Password: a username and its email -> a code is emailed there, and the masked email comes back.\n\nThe reply is the same whether or not the username and email belong to the same account.",
         "operationId": "forgot_auth_forgot_post",
         "requestBody": {
           "content": {
@@ -3991,7 +4072,7 @@
     },
     "/users/me": {
       "get": {
-        "description": "Who am I: the username, name, email, default currency and notifications switch of the signed-in user.",
+        "description": "Who am I: the username, name, phone, email, default currency and notifications switch of the signed-in user.",
         "operationId": "read_me_users_me_get",
         "responses": {
           "200": {
@@ -4228,16 +4309,16 @@
     },
     "/users/search": {
       "get": {
-        "description": "Add People page, live search: the app sends one request per pause in typing (300 ms).\n\nSearching is by username only, and is limited per address and per user.",
+        "description": "Add People page, live search: the app sends one request per pause in typing (300 ms).\n\nSearching is limited per address and per user. Looking someone up by a complete phone number is limited much harder,\nbecause that is the lookup that can reveal who is registered: a person adding friends needs a handful of these, a\nscript testing numbers needs thousands.",
         "operationId": "search_users_users_search_get",
         "parameters": [
           {
-            "description": "Username",
+            "description": "Username, or a full phone number",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Username",
+              "description": "Username, or a full phone number",
               "maxLength": 50,
               "minLength": 1,
               "title": "Q",

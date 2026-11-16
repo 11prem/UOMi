@@ -17,6 +17,10 @@ class User(Base):
     # Lowercase, so unique means unique whatever the capitals. A deleted account gets a unique placeholder
     # (`deleted:<username>@example.invalid`, which no one can sign up with): the address is let go so it can be used again (task 1.7.2).
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    # E.164 (+919876543210), collected at sign-up and used to find a person when adding people to a space. It is never used
+    # to send a code (codes go to the email). Empty (NULL) for an account made before phone numbers came back, and for a
+    # deleted account: the number is let go so it can be used again.
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     currency: Mapped[str] = mapped_column(String(3), default=settings.DEFAULT_CURRENCY)  # the default for a new space
     # The notifications switch on the Profile page. The cards are always kept; this says whether OS pushes may be sent (task 1.8).

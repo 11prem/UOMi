@@ -127,6 +127,7 @@ def test_counterparty_name_is_the_full_name(client):
         json={
             "username": "swetha",
             "name": "Swetha Rao",
+            "phone": "9876543299",
             "email": EXTRA_EMAILS["swetha"],
             "password": "password123",
             "confirm_password": "password123",

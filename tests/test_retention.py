@@ -39,7 +39,7 @@ def reset(public_id: str, created_at) -> PasswordReset:
 
 
 def signup(public_id: str, valid_until) -> PendingSignup:
-    return PendingSignup(public_id=public_id, username="x" + public_id[-5:], name="X", email="x@example.com", password_hash="h",
+    return PendingSignup(public_id=public_id, username="x" + public_id[-5:], name="X", email="x@example.com", phone="+919876543299", password_hash="h",
                          code_hash="0" * 64, expires_at=valid_until, valid_until=valid_until)
 
 

@@ -48,7 +48,7 @@ from app.utils.validators import mask_email
 
 logger = logging.getLogger(__name__)
 
-FORGOT_MESSAGE = "If that username exists, a code has been emailed to its address."
+FORGOT_MESSAGE = "If that username and email belong to the same account, a code has been emailed."
 
 
 def _code_lifetime() -> int:
@@ -60,11 +60,13 @@ def _code_lifetime() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _check_free(db: Session, username: str, email: str) -> None:
+def _check_free(db: Session, username: str, email: str, phone: str) -> None:
     if db.get(User, username) is not None:
         raise api_error(409, "username_taken", "Username already taken")
     if db.scalar(select(User.username).where(User.email == email)) is not None:
         raise api_error(409, "email_taken", "Email already registered")
+    if db.scalar(select(User.username).where(User.phone == phone)) is not None:
+        raise api_error(409, "phone_taken", "Phone number already registered")
 
 
 def active_user(db: Session, username: str) -> User | None:
@@ -83,6 +85,11 @@ def email_available(db: Session, email: str) -> bool:
     return db.scalar(select(User.username).where(User.email == email)) is None
 
 
+def phone_available(db: Session, phone: str) -> bool:
+    """True when no account uses this number. Tells anyone whether a number is registered: it is limited per address."""
+    return db.scalar(select(User.username).where(User.phone == phone)) is None
+
+
 def start_signup(db: Session, data: RegisterRequest, background_tasks: BackgroundTasks) -> SignupStarted:
     """Create Account: check the form, email a code, remember the sign-up. The account is NOT created yet.
 
@@ -91,7 +98,7 @@ def start_signup(db: Session, data: RegisterRequest, background_tasks: Backgroun
     else can still register the same username or email: whoever verifies first gets it.
     """
     now = utcnow()
-    _check_free(db, data.username, data.email)
+    _check_free(db, data.username, data.email, data.phone)
     otp_service.check_limits(db, PendingSignup, PendingSignup.email, data.email, now)  # a cheap refusal, before the hash
 
     # Finished and abandoned sign-ups are forgotten a day after they end, never sooner: the daily cap counts these rows.
@@ -103,6 +110,7 @@ def start_signup(db: Session, data: RegisterRequest, background_tasks: Backgroun
         username=data.username,
         name=data.name,
         email=data.email,
+        phone=data.phone,
         password_hash=security.hash_password(data.password),
         code_hash=security.hash_otp(data.email, code),
         created_at=now,
@@ -136,8 +144,8 @@ def verify_signup(db: Session, pending_id: str, code: str) -> TokenPair:
     if pending.valid_until <= now:
         raise otp_service.request_expired_error()
     # Copied out before checking the code, which commits: a parallel request may delete this row in between.
-    pending_row_id, username, name, email, password_hash = (
-        pending.id, pending.username, pending.name, pending.email, pending.password_hash,
+    pending_row_id, username, name, email, phone, password_hash = (
+        pending.id, pending.username, pending.name, pending.email, pending.phone, pending.password_hash,
     )
     otp_service.check_code(db, PendingSignup, pending, code, now)
     # Used up with one conditional UPDATE, BEFORE anything else: of two parallel requests with the same right code,
@@ -153,18 +161,18 @@ def verify_signup(db: Session, pending_id: str, code: str) -> TokenPair:
         db.rollback()
         raise otp_service.not_found_error()
     try:
-        _check_free(db, username, email)  # someone ELSE may have verified the same username or email first
+        _check_free(db, username, email, phone)  # someone ELSE may have verified the same username, email or phone first
     except HTTPException:
         db.rollback()  # the claim is undone: this sign-up stays open (it can never succeed, but it is not "used")
         raise
-    db.add(User(username=username, name=name, email=email, password_hash=password_hash))
+    db.add(User(username=username, name=name, email=email, phone=phone, password_hash=password_hash))
     try:
         db.flush()
         tokens = session_service.create_session(db, username)
         db.commit()
-    except IntegrityError:  # someone else took the username or email a moment ago
+    except IntegrityError:  # someone else took the username, email or phone a moment ago
         db.rollback()
-        raise api_error(409, "already_registered", "That username or email is already registered.") from None
+        raise api_error(409, "already_registered", "That username, email or phone number is already registered.") from None
     return tokens
 
 
@@ -277,19 +285,22 @@ def logout(db: Session, session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def request_password_reset(db: Session, username: str, background_tasks: BackgroundTasks) -> ForgotResponse:
-    """Forgot Password, step a: email a code to the username's address and say which one (masked).
+def request_password_reset(db: Session, username: str, email: str, background_tasks: BackgroundTasks) -> ForgotResponse:
+    """Forgot Password, step a: the username and the email on that account. When they belong together, email a code there.
 
-    The reply is identical, in content and in how limits apply, for a username that does not exist: a request row is
-    written and counted either way, nothing is emailed for a made-up one, and the masked email shown for it is a
-    stable made-up address (otp_service.fake_masked_email). The limits are by the typed username.
+    The reply is identical, in content and in how limits apply, when they do not (no such username, or another address):
+    a request row is written and counted either way, nothing is emailed, and the masked email shown is just the typed
+    address, masked, which says nothing about any account. The limits are by the typed username. Only a matching pair
+    ever causes an email, so nobody can use this to fill a stranger's inbox: at most OTP_MAX_REQUESTS_PER_HOUR a day
+    for that account's own username.
     """
     now = utcnow()
     otp_service.check_limits(db, PasswordReset, PasswordReset.requested_username, username, now)  # a cheap refusal first
     # Requests, real or made-up, are forgotten a day after they were made, never sooner: the daily cap counts them.
     db.execute(delete(PasswordReset).where(PasswordReset.created_at <= now - timedelta(days=1)))
 
-    user = active_user(db, username)
+    found = active_user(db, username)
+    user = found if found is not None and found.email == email else None  # both must belong to the same account
     code = security.generate_otp()
     reset = PasswordReset(
         public_id=otp_service.new_public_id(otp_service.RESET_PREFIX),
@@ -311,13 +322,13 @@ def request_password_reset(db: Session, username: str, background_tasks: Backgro
     otp_service.check_limits(db, PasswordReset, PasswordReset.requested_username, username, now, mine_id=row_id)
 
     if user is not None:
-        # Sent AFTER the reply, never inline: an inline send would make the reply slower for real usernames, which
-        # tells an attacker who has an account.
+        # Sent AFTER the reply, never inline: an inline send would make the reply slower for a real pair, which tells an
+        # attacker who has an account.
         background_tasks.add_task(otp_service.send_code_email, user.email, code)
 
     return ForgotResponse(
         reset_id=public_id,
-        masked_email=mask_email(user.email) if user is not None else otp_service.fake_masked_email(db, username),
+        masked_email=mask_email(email),
         message=FORGOT_MESSAGE,
         expires_in_seconds=_code_lifetime(),
         resend_after_seconds=settings.OTP_RESEND_COOLDOWN_SECONDS,
