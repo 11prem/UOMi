@@ -6,7 +6,7 @@ UOMi is a shared-expense app for small groups. Friends, flatmates or a travellin
 
 This repository holds the whole product: the Android app, the FastAPI backend, and the design and specification documents that both were built from.
 
-> **Status: v0.2.0, a test build.** The app is complete in *demo mode*. Against the real backend, sign-in, Home, Create Space, the Space page, Notifications and the Transactions list work today. The server now has expense and settle-up endpoints too, but the app's screens for them still show "Not available on this server yet" in server mode. See [Project status](#project-status).
+> **Status: v0.2.0, a test build.** The app is complete in *demo mode*. Against the real backend, sign-up with the emailed code, forgot password, sign-in, Home, Create Space, the Space page, Notifications and the Transactions list work today. The server now has expense and settle-up endpoints too, but the app's screens for them still show "Not available on this server yet" in server mode. See [Project status](#project-status).
 
 **Quick start:** download `UOMi-0.2.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases), install it on an Android phone, and sign in as `kabir.r` / `demo1234`. No server is needed.
 
@@ -153,14 +153,14 @@ PRODUCT.md    product brief
 ## Project status
 
 **Done**
-- The Android app: every screen in the specification, in light and dark, in demo mode. In server mode, sign-in, Home, Create Space, people search, the Space page, Notifications and the Transactions list.
+- The Android app: every screen in the specification, in light and dark, in demo mode. In server mode, sign-up (name, username, phone, email, password, then the emailed code), forgot password (username and email), sign-in, Home, Create Space, people search, the Space page, Notifications and the Transactions list.
 - The backend: accounts with email verification, sessions, forgot password by username, spaces, expenses, settle up, people search, notifications, balance rules, and payment reminders.
 - A standalone debug-signed APK, built from a reproducible script.
 
 **Still to build**
 - **Backend endpoints for:** profile and preferences. Until they exist the app shows "Not available on this server yet" in server mode.
 - **App, server mode:** the expense calls, and the expense, settle-up and members and space settings screens, which still show "Not available on this server yet" although the endpoints now exist (task 6.1).
-- **App, sign-up and forgot password in server mode:** the backend has both now, but the app's eight `auth.*` calls are still stubs and Create Account and Forgot password are disabled in server mode (task 6.1).
+- **Accounts made before phone numbers came back** have no phone and a placeholder email, so they cannot get a reset email. There is no endpoint yet to add or change a phone or an email.
 - **Before any public deployment:** an SMTP server with sending limits, PostgreSQL testing of migrations `0002` to `0004`, and HTTPS.
 - **App:** a real launcher icon, release signing and a Play Store build, testing on real devices, and iOS.
 

@@ -5,6 +5,7 @@ export type AppErrorCode =
   | 'too_many_attempts'
   | 'username_taken'
   | 'email_taken'
+  | 'phone_taken'
   | 'invalid_email'
   | 'invalid_code'
   | 'code_expired'

@@ -18,7 +18,7 @@ import {
 // ---- the backend's JSON (snake_case), as documented in the plan's "Backend contract" table ----
 
 export type PersonDto = { username: string; name: string };
-export type MeDto = PersonDto & { email: string; currency: string };
+export type MeDto = PersonDto & { email: string; phone?: string | null; currency: string };
 export type SpaceCardDto = {
   id: number;
   name: string;
@@ -119,11 +119,12 @@ export function plateOf(username: string, position?: number): User['plate'] {
 }
 
 /** `email` is only known for the signed-in user. */
-export const toUser = (p: PersonDto, o: { position?: number; email?: string } = {}): User => ({
+export const toUser = (p: PersonDto, o: { position?: number; email?: string; phone?: string | null } = {}): User => ({
   id: p.username,
   username: p.username,
   name: p.name,
   email: o.email ?? null,
+  phone: o.phone ?? null,
   emailVerified: true,
   avatarUrl: null,
   plate: plateOf(p.username, o.position),

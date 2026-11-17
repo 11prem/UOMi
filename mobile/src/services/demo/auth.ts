@@ -1,5 +1,6 @@
 import { isValidEmail, maskEmail, normalizeEmail } from '../../domain/email';
 import type { User } from '../../domain/types';
+import { isMobileE164 } from '../../domain/phone';
 import { AppError } from '../errors';
 import type { Services } from '../types';
 import type { Ctx } from './context';
@@ -16,7 +17,7 @@ const passwordOk = (p: string) => p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.te
 const PASSWORD_RULE = 'Use at least 8 characters with a letter and a number';
 
 type Otp = { sentAt: number; wrong: number; lockedUntil: number };
-type SignUp = Otp & { username: string; name: string; email: string; password: string };
+type SignUp = Otp & { username: string; name: string; phone: string; email: string; password: string };
 type Reset = Otp & { userId: string };
 
 export function makeAuth(c: Ctx): Services['auth'] {
@@ -28,6 +29,7 @@ export function makeAuth(c: Ctx): Services['auth'] {
   const normalise = (username: string) => username.trim().toLowerCase();
   const usernameTaken = (username: string) => c.db.users.some((u) => u.username === username);
   const emailTaken = (email: string) => c.db.users.some((u) => u.email === email);
+  const phoneTaken = (phone: string) => c.db.users.some((u) => u.phone === phone);
   const locked = (o: Otp) =>
     new AppError('otp_locked', 'Too many attempts — try again in 10 minutes', { retry_after_seconds: Math.ceil((o.lockedUntil - c.now()) / 1000) });
 
@@ -51,7 +53,7 @@ export function makeAuth(c: Ctx): Services['auth'] {
   };
 
   return {
-    signUp: ({ username, name, email: rawEmail, password }) =>
+    signUp: ({ username, name, phone, email: rawEmail, password }) =>
       c.write(() => {
         const u = normalise(username);
         const n = name.trim();
@@ -59,11 +61,13 @@ export function makeAuth(c: Ctx): Services['auth'] {
         if (!USERNAME.test(u)) throw c.invalid('username', 'Use 3–20 lowercase letters, digits, _ or .');
         if (n.length < 1 || n.length > 50) throw c.invalid('name', 'Enter your name (up to 50 characters)');
         if (!isValidEmail(email)) throw new AppError('invalid_email', 'Enter a valid email address');
+        if (!isMobileE164(phone)) throw c.invalid('phone', 'Enter a valid mobile number');
         if (!passwordOk(password)) throw c.invalid('password', PASSWORD_RULE);
         if (usernameTaken(u)) throw new AppError('username_taken', 'Username already taken');
         if (emailTaken(email)) throw new AppError('email_taken', 'Email already registered');
+        if (phoneTaken(phone)) throw new AppError('phone_taken', 'Phone number already registered');
         const pendingId = c.uid('pend');
-        signups.set(pendingId, { username: u, name: n, email, password, sentAt: c.now(), wrong: 0, lockedUntil: 0 });
+        signups.set(pendingId, { username: u, name: n, phone, email, password, sentAt: c.now(), wrong: 0, lockedUntil: 0 });
         return { pendingId, maskedEmail: maskEmail(email) };
       }),
 
@@ -73,11 +77,13 @@ export function makeAuth(c: Ctx): Services['auth'] {
         checkCode(p, code);
         if (usernameTaken(p.username)) throw new AppError('username_taken', 'Username already taken'); // someone verified first
         if (emailTaken(p.email)) throw new AppError('email_taken', 'Email already registered');
+        if (phoneTaken(p.phone)) throw new AppError('phone_taken', 'Phone number already registered');
         const created: User = {
           id: c.uid('u'),
           username: p.username,
           name: p.name,
           email: p.email,
+          phone: p.phone,
           emailVerified: true,
           avatarUrl: null,
           plate: ((c.db.users.length % 6) + 1) as User['plate'],
@@ -115,16 +121,20 @@ export function makeAuth(c: Ctx): Services['auth'] {
 
     checkUsername: (u) => c.read(() => !usernameTaken(normalise(u))),
     checkEmail: (email) => c.read(() => !emailTaken(normalizeEmail(email))),
+    checkPhone: (phone) => c.read(() => !phoneTaken(phone)),
 
-    requestResetOtp: (username) =>
+    requestResetOtp: (username, rawEmail) =>
       c.write(() => {
-        // An unknown username gets the same reply as a known one (a made-up address, a code that leads nowhere), so the
-        // screen cannot be used to find out who has an account. Its new-password step fails like an expired request.
+        // A username that does not exist, or an email that is not the one on that account, gets the same reply as a
+        // matching pair (the typed address, masked, and a code that leads nowhere), so the screen cannot be used to find
+        // out who has an account. Its new-password step fails like an expired request.
+        const email = normalizeEmail(rawEmail);
+        if (!isValidEmail(email)) throw new AppError('invalid_email', 'Enter a valid email address');
         const name = normalise(username);
         const u = c.db.users.find((x) => x.username === name);
         const resetId = c.uid('rst');
-        resets.set(resetId, { userId: u?.id ?? '', sentAt: c.now(), wrong: 0, lockedUntil: 0 });
-        return { resetId, maskedEmail: maskEmail(u?.email ?? `${name}@example.com`) };
+        resets.set(resetId, { userId: u && u.email === email ? u.id : '', sentAt: c.now(), wrong: 0, lockedUntil: 0 });
+        return { resetId, maskedEmail: maskEmail(email) };
       }),
 
     verifyResetOtp: (resetId, code) =>

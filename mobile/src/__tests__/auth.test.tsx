@@ -42,10 +42,19 @@ const type = (label: string, text: string) => fireEvent.changeText(screen.getByL
 const press = (name: string | RegExp) => fireEvent.press(screen.getByRole('button', { name }));
 const value = (label: string) => screen.getByLabelText(label).props.value;
 
-async function fillSignUp(over: Partial<Record<'username' | 'name' | 'email' | 'password' | 'confirm', string>> = {}) {
-  const v = { username: 'nina.b', name: 'Nina Basu', email: 'Nina.B@Example.com', password: 'sunny2day', confirm: 'sunny2day', ...over };
+/** Picks India in the country sheet (the default follows the phone's region, which is not India under jest). */
+async function pickIndia() {
+  await press(/Change country/);
+  await fireEvent.press(await screen.findByRole('button', { name: 'India +91' }));
+  await waitFor(() => expect(screen.getByLabelText(/IN \+91, India/)).toBeTruthy());
+}
+
+async function fillSignUp(over: Partial<Record<'username' | 'name' | 'phone' | 'email' | 'password' | 'confirm', string>> = {}) {
+  const v = { username: 'nina.b', name: 'Nina Basu', phone: '98765 43210', email: 'Nina.B@Example.com', password: 'sunny2day', confirm: 'sunny2day', ...over };
   await type('Username', v.username);
   await type('Name', v.name);
+  await pickIndia();
+  await type('Phone number', v.phone);
   await type('Email', v.email);
   await type('Password', v.password);
   await type('Confirm password', v.confirm);
@@ -82,7 +91,7 @@ describe('sign up', () => {
     expect(screen.getByText('ni****@example.com')).toBeTruthy(); // the address is masked
     await type(OTP, '123456');
     await waitFor(() => expect(r.getPathname()).toBe('/'));
-    expect(useSession.getState().user).toMatchObject({ username: 'nina.b', name: 'Nina Basu', email: 'nina.b@example.com' });
+    expect(useSession.getState().user).toMatchObject({ username: 'nina.b', name: 'Nina Basu', phone: '+919876543210', email: 'nina.b@example.com' });
     expect(screen.getByRole('tab', { name: 'Home' })).toBeTruthy();
   });
 
@@ -91,6 +100,7 @@ describe('sign up', () => {
     await press('Create account');
     expect(await screen.findByText('Enter a username')).toBeTruthy();
     expect(screen.getByText('Enter your name')).toBeTruthy();
+    expect(screen.getByText('Enter your phone number')).toBeTruthy();
     expect(screen.getByText('Enter your email')).toBeTruthy();
     expect(screen.getByText('At least 8 characters, with a letter and a number', { exact: false })).toBeTruthy();
     expect(screen.getByText('Confirm your password')).toBeTruthy();
@@ -102,6 +112,11 @@ describe('sign up', () => {
     await type('Username', 'Ab');
     await fireEvent(screen.getByLabelText('Username'), 'blur');
     expect(await screen.findByText('Use 3–20 lowercase letters, numbers, _ or .')).toBeTruthy();
+
+    await pickIndia();
+    await type('Phone number', '12345');
+    await fireEvent(screen.getByLabelText('Phone number'), 'blur');
+    expect(await screen.findByText('Enter a 10-digit number for India')).toBeTruthy();
 
     await type('Email', 'nina.b@example');
     await fireEvent(screen.getByLabelText('Email'), 'blur');
@@ -132,12 +147,32 @@ describe('sign up', () => {
     expect(await screen.findByText('Email already registered')).toBeTruthy();
   });
 
-  it('says where the code will go once the email is valid, and has no phone or country field', async () => {
+  it('flags a phone number that already has an account when the field loses focus', async () => {
+    await open('/signup');
+    await pickIndia();
+    await type('Phone number', '98450 12331'); // Kabir's number in the demo data
+    await fireEvent(screen.getByLabelText('Phone number'), 'blur');
+    expect(await screen.findByText('Phone number already registered')).toBeTruthy();
+  });
+
+  it('says the code goes to the email, and the phone gets none', async () => {
     await open('/signup');
     await type('Email', 'nina.b@example.com');
     expect(await screen.findByText('We’ll email a code to ni****@example.com')).toBeTruthy();
-    expect(screen.queryByLabelText('Phone number')).toBeNull();
-    expect(screen.queryByLabelText(/Change country/)).toBeNull();
+    expect(screen.getByLabelText('Phone number')).toBeTruthy();
+    expect(screen.getByText('People use it to find you when adding people to a space. We won’t text you.')).toBeTruthy();
+    expect(screen.queryByText(/text a code/i)).toBeNull();
+  });
+
+  it('the country sheet searches by name or dial code', async () => {
+    await open('/signup');
+    await press(/Change country/);
+    await type('Search countries', 'emirates');
+    expect(await screen.findByRole('button', { name: 'United Arab Emirates +971' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'India +91' })).toBeNull();
+    await type('Search countries', '+44');
+    await fireEvent.press(await screen.findByRole('button', { name: 'United Kingdom +44' }));
+    await waitFor(() => expect(screen.getByLabelText(/GB \+44, United Kingdom/)).toBeTruthy());
   });
 
   it('Back with typed input asks "Discard changes?"', async () => {
@@ -158,6 +193,7 @@ describe('sign up', () => {
     await waitFor(() => expect(r.getPathname()).toBe('/signup'));
     expect(value('Username')).toBe('nina.b');
     expect(value('Name')).toBe('Nina Basu');
+    expect(value('Phone number')).toBe('98765 43210');
     expect(value('Email')).toBe('Nina.B@Example.com');
   });
 });
@@ -271,6 +307,7 @@ describe('forgot password', () => {
   it('an unknown username looks like a known one until the new password is saved, and then nothing is changed', async () => {
     const r = await open('/forgot');
     await type('Username', 'nobody.here');
+    await type('Email', 'nobody.here@example.com');
     await press('Send code');
     await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
     expect(screen.getByText('no*********@example.com')).toBeTruthy();
@@ -290,6 +327,7 @@ describe('forgot password', () => {
     await press('Forgot password?');
     await waitFor(() => expect(r.getPathname()).toBe('/forgot'));
     await type('Username', 'kabir.r');
+    await type('Email', 'kabir.r@example.com');
     await press('Send code');
     await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
     expect(screen.getByText('ka*****@example.com')).toBeTruthy(); // the registered email, masked
@@ -312,6 +350,7 @@ describe('forgot password', () => {
   it('reset checks the new password and its confirmation', async () => {
     const r = await open('/forgot');
     await type('Username', 'kabir.r');
+    await type('Email', 'kabir.r@example.com');
     await press('Send code');
     await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
     await type(OTP, '123456');
@@ -327,6 +366,7 @@ describe('forgot password', () => {
   it('a wrong code on the reset screen shows the same message', async () => {
     const r = await open('/forgot');
     await type('Username', 'kabir.r');
+    await type('Email', 'kabir.r@example.com');
     await press('Send code');
     await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
     await type(OTP, '111111');
@@ -335,23 +375,148 @@ describe('forgot password', () => {
   });
 });
 
-describe('server mode', () => {
-  it('server mode: Create Account shows "Not available on this server yet"', async () => {
-    useSession.setState({ mode: 'server', serverUrl: 'http://x', user: null });
-    const r = await open('/welcome');
-    expect(screen.getByRole('button', { name: 'Create account' })).toBeTruthy(); // still visible
-    await press('Create account');
-    await waitFor(() => expect(r.getPathname()).toBe('/signup'));
-    expect(screen.getByText('Not available on this server yet')).toBeTruthy();
-    expect(screen.queryByLabelText('Username')).toBeNull();
+describe('forgot password: the username and the email together', () => {
+  it('asks for both before calling the service', async () => {
+    const r = await open('/forgot');
+    await press('Send code');
+    expect(await screen.findByText('Enter your username')).toBeTruthy();
+    expect(screen.getByText('Enter your email')).toBeTruthy();
+    await type('Username', 'kabir.r');
+    await type('Email', 'kabir.r@example');
+    await press('Send code');
+    expect(await screen.findByText('Enter a valid email address')).toBeTruthy();
+    expect(r.getPathname()).toBe('/forgot');
   });
 
-  it('server mode: Forgot password? opens the same panel, and Sign In stays a form', async () => {
+  it('a known username with another email looks like a matching pair until the new password is saved, and nothing changes', async () => {
+    const r = await open('/forgot');
+    await type('Username', 'kabir.r');
+    await type('Email', 'someone.else@example.com');
+    await press('Send code');
+    await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
+    expect(screen.getByText('so**********@example.com')).toBeTruthy(); // only the address that was typed, masked
+    await type(OTP, '123456');
+    await waitFor(() => expect(r.getPathname()).toBe('/reset'));
+    await type('New password', 'fresh2pass');
+    await type('Confirm password', 'fresh2pass');
+    await press('Save password');
+    expect(await screen.findByText(/not found/i)).toBeTruthy(); // nothing was reset
+    await expect(currentServices().auth.signIn('kabir.r', 'demo1234')).resolves.toMatchObject({ username: 'kabir.r' }); // the real password still works
+  });
+
+  it('the email may be typed in any case', async () => {
+    const r = await open('/forgot');
+    await type('Username', 'kabir.r');
+    await type('Email', ' Kabir.R@Example.COM ');
+    await press('Send code');
+    await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
+    expect(screen.getByText('ka*****@example.com')).toBeTruthy();
+  });
+});
+
+describe('server mode', () => {
+  /** Answers the app's calls to http://x as the backend would. `handler` gets the path and the parsed body. */
+  function fakeServer(handler: (path: string, body: any) => { status?: number; body?: unknown }) {
+    const calls: { method: string; path: string; body: any }[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+      const path = String(url).replace('http://x', '');
+      const body = init.body ? JSON.parse(init.body as string) : undefined;
+      calls.push({ method: init.method ?? 'GET', path, body });
+      const { status = 200, body: reply } = handler(path, body);
+      return { status, ok: status >= 200 && status < 300, text: async () => (reply === undefined ? '' : JSON.stringify(reply)) };
+    }) as unknown as typeof fetch;
+    return { calls, restore: () => void (globalThis.fetch = original) };
+  }
+  const refuse = (status: number, code: string, message: string) => ({ status, body: { detail: { code, message } } });
+
+  it('Create account is the real form, and it sends the phone and the email to the server', async () => {
     useSession.setState({ mode: 'server', serverUrl: 'http://x', user: null });
-    const r = await open('/signin');
-    expect(screen.queryByText('demo1234')).toBeNull(); // the demo accounts are not listed for a real server
-    await press('Forgot password?');
-    await waitFor(() => expect(r.getPathname()).toBe('/forgot'));
-    expect(screen.getByText('Not available on this server yet')).toBeTruthy();
+    const server = fakeServer((path) => {
+      if (path === '/auth/register') return { status: 202, body: { pending_id: 'su_1', masked_email: 'ni****@example.com', expires_in_seconds: 300, resend_after_seconds: 30 } };
+      if (path.startsWith('/auth/check-')) return { body: { available: true } };
+      if (path === '/auth/register/verify') return refuse(400, 'invalid_code', 'That code is incorrect');
+      return refuse(404, 'not_found', 'Not found');
+    });
+    try {
+      const r = await open('/welcome');
+      await press('Create account');
+      await waitFor(() => expect(r.getPathname()).toBe('/signup'));
+      expect(screen.queryByText('Not available on this server yet')).toBeNull();
+      await fillSignUp();
+      await press('Create account');
+      await waitFor(() => expect(r.getPathname()).toBe('/verify'));
+      expect(server.calls.find((c) => c.path === '/auth/register')?.body).toEqual({
+        username: 'nina.b',
+        name: 'Nina Basu',
+        phone: '+919876543210',
+        email: 'nina.b@example.com',
+        password: 'sunny2day',
+        confirm_password: 'sunny2day',
+      });
+      expect(screen.getByText('ni****@example.com')).toBeTruthy(); // the server's masked email
+      await type(OTP, '111111');
+      expect(await screen.findByText('That code is incorrect')).toBeTruthy(); // the server's answer, shown as it is
+      expect(server.calls.find((c) => c.path === '/auth/register/verify')?.body).toEqual({ pending_id: 'su_1', code: '111111' });
+    } finally {
+      server.restore();
+    }
+  });
+
+  it('Create account shows the server\'s own field messages under the fields they belong to', async () => {
+    useSession.setState({ mode: 'server', serverUrl: 'http://x', user: null });
+    const server = fakeServer((path) => {
+      if (path === '/auth/register') return refuse(409, 'phone_taken', 'Phone number already registered');
+      return { body: { available: true } };
+    });
+    try {
+      const r = await open('/signup');
+      await fillSignUp();
+      await press('Create account');
+      expect(await screen.findByText('Phone number already registered')).toBeTruthy();
+      expect(r.getPathname()).toBe('/signup');
+    } finally {
+      server.restore();
+    }
+  });
+
+  it('Forgot password is the real form, and it sends the username and the email, then the code, then the new password', async () => {
+    useSession.setState({ mode: 'server', serverUrl: 'http://x', user: null });
+    const server = fakeServer((path) => {
+      if (path === '/auth/forgot') return { status: 202, body: { reset_id: 'pw_1', masked_email: 'ka*****@example.com', message: 'ok', expires_in_seconds: 300, resend_after_seconds: 30 } };
+      if (path === '/auth/verify-otp') return { body: { reset_token: 'tok_1', expires_in_seconds: 600 } };
+      if (path === '/auth/reset') return { body: { message: 'Password updated. Please sign in.', username: 'kabir.r' } };
+      return refuse(404, 'not_found', 'Not found');
+    });
+    try {
+      const r = await open('/signin');
+      await press('Forgot password?');
+      await waitFor(() => expect(r.getPathname()).toBe('/forgot'));
+      expect(screen.queryByText('Not available on this server yet')).toBeNull();
+      await type('Username', 'kabir.r');
+      await type('Email', 'Kabir.R@example.com');
+      await press('Send code');
+      await waitFor(() => expect(r.getPathname()).toBe('/forgot-otp'));
+      expect(server.calls.find((c) => c.path === '/auth/forgot')?.body).toEqual({ username: 'kabir.r', email: 'kabir.r@example.com' });
+      expect(screen.getByText('ka*****@example.com')).toBeTruthy();
+      await type(OTP, '123456');
+      await waitFor(() => expect(r.getPathname()).toBe('/reset'));
+      expect(server.calls.find((c) => c.path === '/auth/verify-otp')?.body).toEqual({ reset_id: 'pw_1', code: '123456' });
+      await type('New password', 'fresh2pass');
+      await type('Confirm password', 'fresh2pass');
+      await press('Save password');
+      await waitFor(() => expect(r.getPathname()).toBe('/signin'));
+      expect(server.calls.find((c) => c.path === '/auth/reset')?.body).toEqual({ reset_token: 'tok_1', new_password: 'fresh2pass', confirm_password: 'fresh2pass' });
+      expect(value('Username')).toBe('kabir.r'); // the Sign In screen has the username filled in
+    } finally {
+      server.restore();
+    }
+  });
+
+  it('Sign In stays a form, and the demo accounts are not listed for a real server', async () => {
+    useSession.setState({ mode: 'server', serverUrl: 'http://x', user: null });
+    await open('/signin');
+    expect(screen.queryByText('demo1234')).toBeNull();
+    expect(screen.getByLabelText('Username')).toBeTruthy();
   });
 });

@@ -16,6 +16,7 @@ export const UserSchema = z.object({
   username: z.string(),
   name: z.string(),
   email: z.string().nullable(),
+  phone: z.string().nullable().optional(), // E.164: how people are found when adding people to a space; never gets a code
   emailVerified: z.boolean(),
   avatarUrl: z.string().nullable(),
   plate: z.literal([1, 2, 3, 4, 5, 6]),

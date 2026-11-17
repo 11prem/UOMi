@@ -20,7 +20,8 @@ import type {
 export interface Services {
   mode: 'demo' | 'server';
   auth: {
-    signUp(i: { username: string; name: string; email: string; password: string }): Promise<{ pendingId: string; maskedEmail: string }>;
+    /** `phone` is E.164 (+919876543210). The code goes to the email only; the phone is checked and unique but gets no code. */
+    signUp(i: { username: string; name: string; phone: string; email: string; password: string }): Promise<{ pendingId: string; maskedEmail: string }>;
     verifySignUpOtp(pendingId: string, code: string): Promise<User>;
     /** `ref` is a `pendingId` or a `resetId`. */
     resendOtp(ref: string): Promise<{ resendAfterSeconds: number }>;
@@ -28,10 +29,12 @@ export interface Services {
     signOut(): Promise<void>;
     /** On launch: the signed-in user, or null. */
     restore(): Promise<User | null>;
-    /** Both resolve to `true` when the value is FREE to register ("✓ available"), `false` when taken. */
+    /** All three resolve to `true` when the value is FREE to register ("✓ available"), `false` when taken. */
     checkUsername(u: string): Promise<boolean>;
     checkEmail(email: string): Promise<boolean>;
-    requestResetOtp(username: string): Promise<{ resetId: string; maskedEmail: string }>;
+    checkPhone(phone: string): Promise<boolean>;
+    /** The username and the email on that account. A code is emailed there when they match; the reply is the same when they do not. */
+    requestResetOtp(username: string, email: string): Promise<{ resetId: string; maskedEmail: string }>;
     verifyResetOtp(resetId: string, code: string): Promise<{ resetToken: string }>;
     resetPassword(resetToken: string, newPassword: string): Promise<{ username: string }>;
   };

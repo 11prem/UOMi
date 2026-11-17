@@ -1,3 +1,4 @@
+import { prettyPhone } from '../../domain/phone';
 import { useRef, useState } from 'react';
 import { View, type TextInputInstance } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
@@ -104,6 +105,7 @@ export function EditProfileForm({ user }: { user: User }) {
         />
         <ReadOnlyField label="Username" value={`@${user.username}`} why="Your recovery key, so it can’t be changed." />
         {!!user.email && <ReadOnlyField label="Email" value={user.email} why="Changing your email isn’t available yet." />}
+        {!!user.phone && <ReadOnlyField label="Phone number" value={prettyPhone(user.phone)} why="Changing your phone number isn’t available yet." />}
       </View>
 
       <BottomSheet visible={photoOpen} onClose={() => setPhotoOpen(false)} title="Profile photo">
