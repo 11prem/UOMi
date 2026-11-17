@@ -247,7 +247,7 @@ def test_a_nul_character_is_refused_in_every_free_text_input(client):
 
     attempts = [
         client.post("/auth/register", json=register_payload(username="carol", email=EMAILS["carol"], name="Ca" + NUL + "rol")),
-        client.post("/auth/forgot", json={"username": "ali" + NUL + "ce"}),
+        client.post("/auth/forgot", json={"username": "ali" + NUL + "ce", "email": "alice@example.com"}),
         client.post("/auth/login", json={"username": "ali" + NUL + "ce", "password": "password123"}),
         client.post("/auth/otp/resend", json={"id": "su_" + NUL}),
         client.post("/auth/register/verify", json={"pending_id": pending_id + NUL, "code": "123456"}),
@@ -267,7 +267,7 @@ def test_a_username_that_gets_longer_when_lowercased_is_refused_not_stored(clien
     """The capital dotted I lowercases to two characters, so 50 of them are 100 after lower(): more than the column holds."""
     dotted_capital_i = chr(0x130)
     for path, body in (
-        ("/auth/forgot", {"username": dotted_capital_i * 50}),
+        ("/auth/forgot", {"username": dotted_capital_i * 50, "email": "x@example.com"}),
         ("/auth/login", {"username": dotted_capital_i * 50, "password": "x"}),
     ):
         response = client.post(path, json=body)
@@ -276,7 +276,7 @@ def test_a_username_that_gets_longer_when_lowercased_is_refused_not_stored(clien
 
 
 def test_a_forgot_request_is_still_made_for_a_name_of_the_longest_allowed_size(client):
-    assert client.post("/auth/forgot", json={"username": "x" * 50}).status_code == 202
+    assert client.post("/auth/forgot", json={"username": "x" * 50, "email": "x@example.com"}).status_code == 202
 
 
 def test_old_reset_requests_are_forgotten_a_day_later_but_not_before(client):
@@ -289,14 +289,14 @@ def test_old_reset_requests_are_forgotten_a_day_later_but_not_before(client):
     from tests.helpers import db_all
 
     register(client, "alice")
-    client.post("/auth/forgot", json={"username": "ghost.one"})
-    client.post("/auth/forgot", json={"username": "ghost.two"})
+    client.post("/auth/forgot", json={"username": "ghost.one", "email": "ghost.one@example.com"})
+    client.post("/auth/forgot", json={"username": "ghost.two", "email": "ghost.two@example.com"})
     with SessionLocal() as session:  # ghost.one is two days old, ghost.two is only an hour old
         rows = {r.requested_username: r for r in session.scalars(select(PasswordReset))}
         rows["ghost.one"].created_at -= timedelta(days=2)
         rows["ghost.two"].created_at -= timedelta(hours=1)
         session.commit()
 
-    client.post("/auth/forgot", json={"username": "alice"})
+    client.post("/auth/forgot", json={"username": "alice", "email": "alice@example.com"})
 
     assert sorted(r.requested_username for r in db_all(select(PasswordReset))) == ["alice", "ghost.two"]

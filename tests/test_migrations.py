@@ -303,6 +303,11 @@ def test_0009_replaces_the_phone_with_a_unique_email_and_keeps_every_account(db_
     def columns(db: Path, table: str) -> dict[str, int]:
         return {name: notnull for _, name, _, notnull, *_ in rows(db, f"PRAGMA table_info({table})")}
 
+    at_0009 = tmp_path / "at_0009.db"  # the schema as 0009 left it: 0010 brings the phone back, so look one step down
+    shutil.copy(db_head, at_0009)
+    alembic(at_0009, "downgrade", "0009")
+    db_head = at_0009
+
     for table in ("users", "pending_signups", "password_resets"):
         assert "phone" not in columns(db_head, table) and "email" in columns(db_head, table)
     assert columns(db_head, "users")["email"] == 1  # NOT NULL
@@ -323,6 +328,7 @@ def test_0009_replaces_the_phone_with_a_unique_email_and_keeps_every_account(db_
 def test_0009_drops_what_was_waiting_on_a_phone_code_and_a_downgrade_restores_unique_phones(db_head, tmp_path):
     db = tmp_path / "copy.db"
     shutil.copy(db_head, db)
+    alembic(db, "downgrade", "0009")  # the sign-up below is written the way 0009 left the table: an email, no phone
     run_script(
         db,
         """
@@ -346,3 +352,30 @@ def test_0009_drops_what_was_waiting_on_a_phone_code_and_a_downgrade_restores_un
     assert rows(db, "SELECT username, email FROM users ORDER BY username") == [
         ("alice", "alice@example.invalid"), ("bob", "bob@example.invalid"), ("gone", "gone@example.invalid"),
     ]
+
+
+def test_0010_brings_the_phone_back_empty_and_unique_and_changes_no_account(db_head, tmp_path):
+    def column(db: Path, table: str, name: str):
+        return next((notnull for _, found, _, notnull, *_ in rows(db, f"PRAGMA table_info({table})") if found == name), None)
+
+    assert column(db_head, "users", "phone") == 0  # there, NULL allowed
+    assert column(db_head, "pending_signups", "phone") == 1  # a sign-up always carries one
+    assert column(db_head, "password_resets", "phone") is None  # forgot password uses the email: no phone there
+    assert rows(db_head, "SELECT COUNT(*) FROM users WHERE phone IS NOT NULL") == [(0,)]  # 0009 dropped the numbers for good
+    indexes = {(name, bool(unique), tuple(c for _, _, c in rows(db_head, f"PRAGMA index_info({name})")))
+               for _, name, unique, *_ in rows(db_head, "PRAGMA index_list(users)")}
+    assert ("ix_users_phone", True, ("phone",)) in indexes
+
+    db = tmp_path / "phones.db"
+    shutil.copy(db_head, db)
+    users = rows(db, "SELECT username, email FROM users ORDER BY username")
+    run_script(db, "UPDATE users SET phone = '+919876543210' WHERE username = 'alice'")  # one number is fine, many empty ones too
+    with pytest.raises(sqlite3.IntegrityError):
+        run_script(db, "UPDATE users SET phone = '+919876543210' WHERE username = 'bob'")  # but two people cannot share one
+
+    alembic(db, "downgrade", "0009")
+    assert "phone" not in [name for _, name, *_ in rows(db, "PRAGMA table_info(users)")]
+    assert rows(db, "SELECT username, email FROM users ORDER BY username") == users  # nobody is lost, emails are untouched
+    alembic(db, "upgrade", "head")
+    assert rows(db, "SELECT username, email FROM users ORDER BY username") == users
+    assert rows(db, "SELECT COUNT(*) FROM users WHERE phone IS NOT NULL") == [(0,)]  # the number was not kept by the downgrade

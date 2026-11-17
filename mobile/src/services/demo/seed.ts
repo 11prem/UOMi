@@ -9,19 +9,19 @@ const DAY = 86_400_000;
 export const DEMO_PASSWORD = 'demo1234';
 
 type Plate = User['plate'];
-const USERS: [id: string, username: string, name: string, email: string, plate: Plate][] = [
-  ['u_kabir', 'kabir.r', 'Kabir Rao', 'kabir.r@example.com', 1],
-  ['u_swetha', 'swetha.i', 'Swetha Iyer', 'swetha.i@example.com', 2],
-  ['u_arun', 'arun.n', 'Arun Nair', 'arun.n@example.com', 3],
-  ['u_meera', 'meera.s', 'Meera Shah', 'meera.s@example.com', 4],
-  ['u_rohan', 'rohan.d', 'Rohan Das', 'rohan.d@example.com', 5],
-  ['u_priya', 'priya.m', 'Priya Menon', 'priya.m@example.com', 6],
+const USERS: [id: string, username: string, name: string, email: string, phone: string, plate: Plate][] = [
+  ['u_kabir', 'kabir.r', 'Kabir Rao', 'kabir.r@example.com', '+919845012331', 1],
+  ['u_swetha', 'swetha.i', 'Swetha Iyer', 'swetha.i@example.com', '+919880213344', 2],
+  ['u_arun', 'arun.n', 'Arun Nair', 'arun.n@example.com', '+919446078812', 3],
+  ['u_meera', 'meera.s', 'Meera Shah', 'meera.s@example.com', '+971501234567', 4],
+  ['u_rohan', 'rohan.d', 'Rohan Das', 'rohan.d@example.com', '+919830045566', 5],
+  ['u_priya', 'priya.m', 'Priya Menon', 'priya.m@example.com', '+919567001122', 6],
 ];
 
 export function seed(now: number): DemoDb {
   const ago = (days: number) => Math.round(now - days * DAY);
 
-  const users: User[] = USERS.map(([id, username, name, email, plate]) => ({ id, username, name, email, emailVerified: true, avatarUrl: null, plate }));
+  const users: User[] = USERS.map(([id, username, name, email, phone, plate]) => ({ id, username, name, email, phone, emailVerified: true, avatarUrl: null, plate }));
   const passwords = Object.fromEntries(users.map((u) => [u.id, DEMO_PASSWORD]));
   const first = (id: string) => users.find((u) => u.id === id)!.name.split(' ')[0];
 

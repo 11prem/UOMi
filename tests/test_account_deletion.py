@@ -90,7 +90,7 @@ def test_the_row_is_anonymised_and_nothing_personal_is_left(client, users):
 
 def test_their_cards_sessions_and_reset_records_are_removed(client, users):
     create_space(client, users["alice"], "Flat", ["carol"])  # gives carol a card
-    client.post("/auth/forgot", json={"username": "carol"})
+    client.post("/auth/forgot", json={"username": "carol", "email": "carol@example.com"})
     assert db_all(select(Notification).where(Notification.username == "carol")) and db_all(select(PasswordReset))
 
     delete_me(client, users["carol"])
@@ -128,8 +128,8 @@ def test_forgot_password_treats_a_deleted_account_like_one_that_never_existed(cl
     delete_me(client, users["carol"])
     helpers.OUTBOX.clear()
 
-    deleted = client.post("/auth/forgot", json={"username": "carol"})
-    never = client.post("/auth/forgot", json={"username": "nobody.here"})
+    deleted = client.post("/auth/forgot", json={"username": "carol", "email": "carol@example.com"})
+    never = client.post("/auth/forgot", json={"username": "nobody.here", "email": "nobody.here@example.com"})
 
     assert deleted.status_code == never.status_code == 202
     assert set(deleted.json()) == set(never.json())
@@ -137,7 +137,7 @@ def test_forgot_password_treats_a_deleted_account_like_one_that_never_existed(cl
 
 
 def test_an_old_reset_code_cannot_bring_a_deleted_account_back(client, users):
-    started = client.post("/auth/forgot", json={"username": "carol"})
+    started = client.post("/auth/forgot", json={"username": "carol", "email": "carol@example.com"})
     verified = client.post("/auth/verify-otp", json={"reset_id": started.json()["reset_id"], "code": helpers.last_code(EMAILS["carol"])})
     token = verified.json()["reset_token"]
     delete_me(client, users["carol"])

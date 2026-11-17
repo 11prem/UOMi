@@ -3,9 +3,9 @@
 The rule, in short:
   * The account is ANONYMISED, not removed. The `users` row stays, because the username is the key that other people's
     expenses, shares and payments point at, so their ledgers keep adding up. The row's name becomes "Deleted user",
-    its email is let go, its password is replaced by one nobody knows, and `deleted_at` says when.
+    its email and phone are let go, its password is replaced by one nobody knows, and `deleted_at` says when.
   * The username is retired: nobody can sign up with it again, so nobody can pose as the old person in old spaces.
-  * The email address is free again: it can be used to sign up a new account.
+  * The email address and the phone number are free again: either can be used to sign up a new account.
   * Deleting is refused until the person is settled up in every space (their balance with everyone is zero, the same rule
     as leaving a space), and while they own a space that still has other people in it (they delete it or remove the
     others first). A space that only they are in goes with the account.
@@ -95,6 +95,7 @@ def delete_account(db: Session, user: User, password: str) -> None:
             deleted_at=utcnow(),
             name=DELETED_NAME,
             email="deleted:" + User.username + "@example.invalid",  # unique, and no one can sign up with a ':'
+            phone=None,
             password_hash=unusable_password,
             notifications_on=False,
         )

@@ -112,7 +112,7 @@ def test_the_right_code_creates_the_account_and_signs_the_user_in(client, email_
     tokens = response.json()
     assert tokens["token_type"] == "bearer" and tokens["idle_timeout_seconds"] == settings.SESSION_IDLE_TIMEOUT_MINUTES * 60
     assert client.get("/users/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}).json() == {
-        "username": "alice", "name": "Alice", "email": "alice@example.com", "currency": "INR", "notifications_on": True,
+        "username": "alice", "name": "Alice", "phone": "+919876543210", "email": "alice@example.com", "currency": "INR", "notifications_on": True,
     }
     [kept] = db_all(select(PendingSignup))  # kept for a day, because the daily code cap counts it, but used up
     assert kept.used_at is not None and kept.password_hash == ""  # and its password hash is wiped
@@ -194,7 +194,7 @@ def test_an_unknown_or_foreign_id_is_not_found(client):
     for bad in ("su_made-up", "pw_made-up", "nonsense", "x" * 60):
         response = verify(client, bad, "123456")
         assert response.status_code == 404 and error_code(response) == "verification_not_found", bad
-    reset_id = client.post("/auth/forgot", json={"username": "alice"}).json()["reset_id"]
+    reset_id = client.post("/auth/forgot", json={"username": "alice", "email": "alice@example.com"}).json()["reset_id"]
     assert error_code(verify(client, reset_id, "123456")) == "verification_not_found"  # a reset id is not a sign-up id
 
 
@@ -391,7 +391,7 @@ def test_one_right_code_cannot_create_the_account_twice_at_the_same_moment(file_
     with Session(file_engine) as db:
         db.add(
             PendingSignup(
-                public_id="su_race", username="alice", name="Alice", email="alice@example.com",
+                public_id="su_race", username="alice", name="Alice", email="alice@example.com", phone="+919876543210",
                 password_hash=security.hash_password("password123"),
                 code_hash=security.hash_otp("alice@example.com", "123456"),
                 last_sent_at=now, expires_at=now + timedelta(minutes=5), valid_until=now + timedelta(minutes=30),

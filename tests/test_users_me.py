@@ -9,8 +9,8 @@ def test_users_me(client):
 
     response = client.get("/users/me", headers=auth(alice))
     assert response.status_code == 200
-    # exactly these five: the email is the caller's own, and nothing like password_hash leaks
-    assert response.json() == {"username": "alice", "name": "Alice", "email": "alice@example.com", "currency": "INR", "notifications_on": True}
+    # exactly these six: the phone and the email are the caller's own, and nothing like password_hash leaks
+    assert response.json() == {"username": "alice", "name": "Alice", "phone": "+919876543210", "email": "alice@example.com", "currency": "INR", "notifications_on": True}
 
 
 def test_users_me_needs_a_token(client):

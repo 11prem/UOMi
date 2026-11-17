@@ -54,7 +54,7 @@ export function createServerServices(opts: ServerOptions): Services {
   let me: { user: User; currency: Currency } | null = null;
   async function loadMe() {
     const r = await http.request<MeDto>('GET', '/users/me');
-    return (me = { user: toUser(r, { email: r.email }), currency: r.currency as Currency });
+    return (me = { user: toUser(r, { email: r.email, phone: r.phone }), currency: r.currency as Currency });
   }
   const viewer = async () => me ?? (await loadMe());
   const home = () => http.request<SpaceListDto>('GET', '/spaces');
@@ -70,14 +70,52 @@ export function createServerServices(opts: ServerOptions): Services {
     mode: 'server',
 
     auth: {
-      signUp: no,
-      verifySignUpOtp: no,
-      resendOtp: no,
-      checkUsername: no,
-      checkEmail: no,
-      requestResetOtp: no,
-      verifyResetOtp: no,
-      resetPassword: no,
+      async signUp({ username, name, phone, email, password }) {
+        const r = await http.plain<{ pending_id: string; masked_email: string }>('POST', '/auth/register', {
+          username: username.trim(),
+          name: name.trim(),
+          phone,
+          email,
+          password,
+          confirm_password: password, // the screen already checked the two match
+        });
+        return { pendingId: r.pending_id, maskedEmail: r.masked_email };
+      },
+
+      async verifySignUpOtp(pendingId, code) {
+        me = null;
+        await http.startSession('POST', '/auth/register/verify', { pending_id: pendingId, code }); // the account exists now, and so does the session
+        try {
+          return (await loadMe()).user;
+        } catch (e) {
+          await http.forget(); // not signed in after all: don't keep tokens that restore() would pick up
+          throw e;
+        }
+      },
+
+      async resendOtp(ref) {
+        const r = await http.plain<{ resend_after_seconds: number }>('POST', '/auth/otp/resend', { id: ref });
+        return { resendAfterSeconds: r.resend_after_seconds };
+      },
+
+      checkUsername: async (u) => (await http.plain<{ available: boolean }>('GET', `/auth/check-username?username=${encodeURIComponent(u.trim().toLowerCase())}`)).available,
+      checkEmail: async (email) => (await http.plain<{ available: boolean }>('GET', `/auth/check-email?email=${encodeURIComponent(email.trim())}`)).available,
+      checkPhone: async (phone) => (await http.plain<{ available: boolean }>('GET', `/auth/check-phone?phone=${encodeURIComponent(phone)}`)).available,
+
+      async requestResetOtp(username, email) {
+        const r = await http.plain<{ reset_id: string; masked_email: string }>('POST', '/auth/forgot', { username: username.trim(), email: email.trim() });
+        return { resetId: r.reset_id, maskedEmail: r.masked_email };
+      },
+
+      async verifyResetOtp(resetId, code) {
+        const r = await http.plain<{ reset_token: string }>('POST', '/auth/verify-otp', { reset_id: resetId, code });
+        return { resetToken: r.reset_token };
+      },
+
+      async resetPassword(resetToken, newPassword) {
+        const r = await http.plain<{ username: string }>('POST', '/auth/reset', { reset_token: resetToken, new_password: newPassword, confirm_password: newPassword });
+        return { username: r.username };
+      },
 
       async signIn(username, password) {
         me = null;

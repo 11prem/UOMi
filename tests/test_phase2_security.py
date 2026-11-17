@@ -233,7 +233,7 @@ def test_a_code_emailed_under_one_otp_key_is_refused_under_another(client, email
     register(client, "alice")
     register(client, "bob")
     monkeypatch.setattr(settings, "OTP_HMAC_KEY", GOOD_OTP_KEY)
-    alices = client.post("/auth/forgot", json={"username": "alice"})
+    alices = client.post("/auth/forgot", json={"username": "alice", "email": "alice@example.com"})
     assert alices.status_code == 202
     alices_code = emailed_code()
 
@@ -242,7 +242,7 @@ def test_a_code_emailed_under_one_otp_key_is_refused_under_another(client, email
     assert refused.status_code == 400 and error_code(refused) == "invalid_code"
 
     # control: a code emailed under the new key is accepted, so the refusal above was about the key
-    bobs = client.post("/auth/forgot", json={"username": "bob"})
+    bobs = client.post("/auth/forgot", json={"username": "bob", "email": "bob@example.com"})
     assert bobs.status_code == 202
     accepted = client.post("/auth/verify-otp", json={"reset_id": bobs.json()["reset_id"], "code": emailed_code()})
     assert accepted.status_code == 200
@@ -551,9 +551,9 @@ def test_the_code_email_is_scheduled_after_the_reply_not_sent_during_it(client, 
     email_outbox.clear()  # the sign-up code
     registered, unknown, signing_up = BackgroundTasks(), BackgroundTasks(), BackgroundTasks()
     with SessionLocal() as db:
-        auth_service.request_password_reset(db, "alice", registered)
-        auth_service.request_password_reset(db, "nobody", unknown)
-        auth_service.start_signup(db, RegisterRequest(**register_payload(username="bob", email=EMAILS["bob"])), signing_up)
+        auth_service.request_password_reset(db, "alice", "alice@example.com", registered)
+        auth_service.request_password_reset(db, "nobody", "nobody@example.com", unknown)
+        auth_service.start_signup(db, RegisterRequest(**register_payload(username="bob", email=EMAILS["bob"], phone="9876543211")), signing_up)
     assert email_outbox == []  # nothing was sent while the replies were being prepared
     assert len(registered.tasks) == 1 and unknown.tasks == [] and len(signing_up.tasks) == 1
     asyncio.run(registered())

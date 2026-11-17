@@ -14,6 +14,7 @@ const SAME_NAME = new Set<string>([
   'too_many_attempts',
   'username_taken',
   'email_taken',
+  'phone_taken',
   'invalid_email',
   'invalid_code',
   'code_expired',
@@ -32,6 +33,11 @@ const RENAMED: Record<string, AppErrorCode> = {
   person_not_found: 'not_found',
   member_not_found: 'not_found',
   unknown_usernames: 'validation_error', // the list stays in `extra.usernames`
+  verification_not_found: 'not_found', // a sign-up or reset id the server does not know (or already used)
+  verification_expired: 'not_found', // the 30 minutes for the whole sign-up or reset ran out: start again
+  reset_session_expired: 'not_found', // the reset token is unknown, used or too old
+  resend_too_soon: 'too_many_attempts', // wait `extra.retry_after_seconds`
+  too_many_requests: 'too_many_attempts',
 };
 
 export type HttpOptions = {
@@ -191,6 +197,15 @@ export function createHttp(o: HttpOptions) {
 
     async login(username: string, password: string) {
       const pair = (await sendPlain('POST', '/auth/login', { username, password })) as TokenPairDto;
+      await replace({ access: pair.access_token, refresh: pair.refresh_token, lastRequestAt: now(), idleSeconds: pair.idle_timeout_seconds });
+    },
+
+    /** A call made without a session (sign-up, the codes, forgot password). Failures are `AppError`s, as for sign-in. */
+    plain: <T>(method: string, path: string, body?: unknown) => sendPlain(method, path, body) as Promise<T>,
+
+    /** A call whose reply is a token pair that starts the session: the right sign-up code creates the account and signs in. */
+    async startSession(method: string, path: string, body: unknown) {
+      const pair = (await sendPlain(method, path, body)) as TokenPairDto;
       await replace({ access: pair.access_token, refresh: pair.refresh_token, lastRequestAt: now(), idleSeconds: pair.idle_timeout_seconds });
     },
 

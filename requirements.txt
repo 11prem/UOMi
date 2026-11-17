@@ -16,6 +16,7 @@ bcrypt==5.0.0
 PyJWT==2.15.1
 alembic==1.20.1
 APScheduler==3.11.3
+phonenumbers==9.0.43  # phone number checks (libphonenumber), as the app does
 
 # PostgreSQL (the default DATABASE_URL is SQLite, which needs nothing extra). Pin the version when you enable it:
 # psycopg[binary]==<version>
