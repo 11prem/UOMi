@@ -1,6 +1,7 @@
 # Secrets and local settings: never commit these
 .env
-.env.local
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -8,10 +9,27 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node
+node_modules/
 
 # Local databases
 *.db
 *.sqlite3
+
+# Logs
+*.log
+
+# Signing keys: never commit these
+*.keystore
+*.jks
+*.p12
+*.p8
 
 # Editors and OS
 .vscode/
@@ -19,7 +37,6 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
-.env
 
 # Build output (release APK lands in dist/)
 dist/
