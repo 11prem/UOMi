@@ -1,0 +1,1132 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import { AppError } from '../errors';
+import { TRANSACTIONS_MAX_PAGES, TRANSACTIONS_PAGE, createServerServices } from '../server';
+import { REQUEST_TIMEOUT_MS } from '../server/http';
+import { defaultTokenStore, type StoredTokens, type TokenStore } from '../server/tokens';
+
+jest.mock('expo-secure-store', () => {
+  const values = new Map<string, string>();
+  return {
+    getItemAsync: jest.fn(async (k: string) => values.get(k) ?? null),
+    setItemAsync: jest.fn(async (k: string, v: string) => void values.set(k, v)),
+    deleteItemAsync: jest.fn(async (k: string) => void values.delete(k)),
+  };
+});
+
+const BASE = 'http://10.0.0.5:8000';
+const NOW = 1_800_000_000_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ---- fakes ----
+
+const memoryStore = (initial: StoredTokens | null = null) => {
+  const s = {
+    value: initial,
+    get: async () => s.value,
+    set: async (t: StoredTokens) => void (s.value = t),
+    clear: async () => void (s.value = null),
+  };
+  return s satisfies TokenStore;
+};
+
+type Call = { method: string; path: string; headers: Record<string, string>; body?: any };
+type Reply = { status?: number; body?: unknown };
+/** A fetch that answers with `handler(call)`; replies are `{status, body}` (body JSON-encoded) or throw to simulate a dead connection. */
+function fakeFetch(handler: (c: Call) => Reply | Promise<Reply>) {
+  const calls: Call[] = [];
+  const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+    const call: Call = {
+      method: init.method ?? 'GET',
+      path: url.replace(BASE, ''),
+      headers: (init.headers ?? {}) as Record<string, string>,
+      body: init.body ? JSON.parse(init.body as string) : undefined,
+    };
+    calls.push(call);
+    const { status = 200, body } = await handler(call);
+    return { status, ok: status >= 200 && status < 300, text: async () => (body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body)) };
+  }) as unknown as typeof fetch;
+  return { fetchImpl, calls };
+}
+const fail = (status: number, code: string, message: string, extra: object = {}): Reply => ({ status, body: { detail: { code, message, ...extra } } });
+const pair = (n: number) => ({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, token_type: 'bearer', expires_in: 900, idle_timeout_seconds: 600 });
+const tokens = (n: number, lastRequestAt = NOW): StoredTokens => ({ access: `access-${n}`, refresh: `refresh-${n}`, lastRequestAt, idleSeconds: 600 });
+const ME = { username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', phone: '+919000000001' };
+
+function make(handler: (c: Call) => Reply | Promise<Reply>, store = memoryStore(tokens(1)), baseUrl = BASE) {
+  const { fetchImpl, calls } = fakeFetch(handler);
+  const clock = { now: NOW };
+  const onSignedOut = jest.fn();
+  const onActivity = jest.fn();
+  const svc = createServerServices({ baseUrl, tokenStore: store, fetchImpl, now: () => clock.now, onSignedOut, onActivity });
+  return { svc, calls, store, clock, onSignedOut, onActivity };
+}
+const rejects = async (p: Promise<unknown>, code: string) => {
+  const err = await p.then(
+    () => null,
+    (e) => e,
+  );
+  expect(err).toBeInstanceOf(AppError);
+  expect(err.code).toBe(code);
+  return err as AppError;
+};
+const bearer = (c: Call) => c.headers.Authorization;
+
+// ---- fixtures: shaped like the backend's responses ----
+
+const person = (username: string, name: string) => ({ username, name });
+const KABIR = person('kabir.r', 'Kabir Rao');
+const ARUN = person('arun.n', 'Arun Nair');
+const SWETHA = person('swetha.i', 'Swetha Iyer');
+const PRIYA = person('priya.m', 'Priya Menon');
+const expense = (id: number, description: string, amount: number, paidBy: object, date: string, mine: number | null, extra: object = {}) => ({
+  id,
+  description,
+  amount_minor: amount,
+  split_type: 'equal',
+  paid_by: paidBy,
+  created_by: paidBy,
+  date,
+  created_at: `${date}T08:00:00Z`,
+  updated_at: `${date}T08:00:00Z`,
+  my_share_minor: mine,
+  my_share_status: mine === null ? null : 'accepted',
+  disputed: false,
+  ...extra,
+});
+const GOA = {
+  id: 2,
+  name: 'Goa Trip',
+  icon: 'trip',
+  currency: 'INR',
+  owner_username: 'arun.n',
+  created_at: '2026-10-01T06:00:00.123456Z',
+  balance_minor: 150000,
+  members: [
+    { ...KABIR, position: 1 },
+    { ...ARUN, position: 2 },
+    { ...SWETHA, position: 3 },
+    { ...PRIYA, position: 4 },
+  ],
+  expenses: [
+    expense(14, 'Taxi', 50000, KABIR, '2026-11-03', null), // I paid, I have no share
+    expense(13, 'Shack', 280000, SWETHA, '2026-11-03', null, { disputed: true }), // not involved
+    expense(12, 'Scooters', 600000, KABIR, '2026-11-02', 150000), // I paid, my own share is 1500
+    expense(11, 'Villa', 1200000, ARUN, '2026-10-20', 300000), // Arun paid, I owe 3000
+  ],
+  settlements: [
+    { id: 6, from_user: PRIYA, to_user: KABIR, amount_minor: 100000, status: 'pending', created_at: '2026-11-04T09:30:00Z', answered_at: null },
+    { id: 5, from_user: KABIR, to_user: ARUN, amount_minor: 200000, status: 'confirmed', created_at: '2026-10-25T10:00:00Z', answered_at: '2026-10-25T11:00:00Z' },
+  ],
+  pairwise: [
+    { debtor: PRIYA, creditor: KABIR, amount_minor: 450000 },
+    { debtor: KABIR, creditor: ARUN, amount_minor: 300000 },
+    { debtor: SWETHA, creditor: ARUN, amount_minor: 10000 }, // not the viewer's pair
+  ],
+};
+const card = (id: number, name: string, currency: string, balance: number, open: number, cpCount: number, cpName: string | null, last: string) => ({
+  id,
+  name,
+  icon: 'home',
+  currency,
+  member_count: 3,
+  balance_minor: balance,
+  open_balances: open,
+  counterparty_name: cpName,
+  counterparty_count: cpCount,
+  last_activity_at: last,
+});
+// The "Seed expected values" table of the plan.
+const HOME = {
+  overall: [
+    { currency: 'INR', net_minor: 966666, owe_minor: 87334, owed_minor: 1054000 },
+    { currency: 'USD', net_minor: 3500, owe_minor: 0, owed_minor: 3500 },
+  ],
+  spaces: [
+    card(1, 'Flat 4B', 'INR', -47334, 2, 2, null, '2026-11-05T10:00:00Z'),
+    card(4, 'Dubai stopover', 'USD', 3500, 1, 1, 'Meera Shah', '2026-11-04T10:00:00Z'),
+    card(5, 'Sunday cricket', 'INR', 0, 2, 0, null, '2026-11-03T10:00:00Z'),
+  ],
+};
+const note = (id: number, over: object = {}) => ({
+  id,
+  type: 'expense_share',
+  message: 'Swetha added ‘Dinner’ — your share is ₹14',
+  space_id: 1,
+  space_name: 'Flat 4B',
+  ref_id: 9,
+  needs_answer: true,
+  read: false,
+  created_at: '2026-11-05T08:00:00Z',
+  ...over,
+});
+
+describe('sign in, restore, sign out', () => {
+  it('signIn stores tokens and loads /users/me', async () => {
+    const { svc, calls, store, onActivity } = make(
+      (c) => (c.path === '/auth/login' ? { body: pair(1) } : { body: ME }),
+      memoryStore(),
+    );
+    const user = await svc.auth.signIn('kabir.r', 'demo1234');
+    expect(user).toEqual({ id: 'kabir.r', username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', emailVerified: true, avatarUrl: null, plate: 4 });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /auth/login', 'GET /users/me']);
+    expect(calls[0].body).toEqual({ username: 'kabir.r', password: 'demo1234' });
+    expect(bearer(calls[0])).toBeUndefined();
+    expect(bearer(calls[1])).toBe('Bearer access-1');
+    expect(store.value).toEqual({ access: 'access-1', refresh: 'refresh-1', lastRequestAt: NOW, idleSeconds: 600 });
+    expect(onActivity).toHaveBeenCalled();
+  });
+
+  it('a wrong password and a lockout keep the server code and detail', async () => {
+    const wrong = make(() => fail(401, 'invalid_credentials', 'Incorrect username or password.'), memoryStore());
+    const err = await rejects(wrong.svc.auth.signIn('kabir.r', 'nope'), 'invalid_credentials');
+    expect(err.message).toBe('Incorrect username or password.');
+    expect(wrong.store.value).toBeNull();
+    expect(wrong.onSignedOut).not.toHaveBeenCalled();
+
+    const locked = make(() => fail(429, 'too_many_attempts', 'Too many failed attempts.', { retry_after_seconds: 840 }), memoryStore());
+    expect((await rejects(locked.svc.auth.signIn('kabir.r', 'nope'), 'too_many_attempts')).extra).toEqual({ retry_after_seconds: 840 });
+  });
+
+  it('a sign-in whose /users/me fails leaves no tokens behind', async () => {
+    const { svc, store } = make(
+      (c) => {
+        if (c.path === '/auth/login') return { body: pair(1) };
+        throw new TypeError('Network request failed');
+      },
+      memoryStore(),
+    );
+    await rejects(svc.auth.signIn('kabir.r', 'demo1234'), 'network');
+    expect(store.value).toBeNull();
+  });
+
+  it('restore after idle returns null', async () => {
+    const idle = make(() => ({ body: ME }), memoryStore(tokens(1, NOW - 571_000)));
+    expect(await idle.svc.auth.restore()).toBeNull();
+    expect(idle.store.value).toBeNull();
+    expect(idle.calls).toHaveLength(0);
+
+    const active = make(() => ({ body: ME }), memoryStore(tokens(1, NOW - 500_000)));
+    expect((await active.svc.auth.restore())?.username).toBe('kabir.r');
+    expect(active.calls.map((c) => c.path)).toEqual(['/users/me']);
+    expect(active.store.value).not.toBeNull();
+
+    // The limit is idle_timeout_seconds − 30, and exactly at it still counts as active.
+    const edge = make(() => ({ body: ME }), memoryStore(tokens(1, NOW - 570_000)));
+    expect(await edge.svc.auth.restore()).not.toBeNull();
+  });
+
+  it('restore with nothing stored, or with a session the server already ended, gives null', async () => {
+    const none = make(() => ({ body: ME }), memoryStore());
+    expect(await none.svc.auth.restore()).toBeNull();
+    expect(none.calls).toHaveLength(0);
+
+    const ended = make(() => fail(401, 'session_expired', 'You were signed out after 10 minutes of inactivity.'));
+    expect(await ended.svc.auth.restore()).toBeNull();
+    expect(ended.store.value).toBeNull();
+  });
+
+  it('signOut calls /auth/logout, ignores its failure and clears the tokens without calling onSignedOut', async () => {
+    const { svc, calls, store, onSignedOut } = make((c) => {
+      if (c.path === '/auth/logout') throw new TypeError('Network request failed');
+      return { body: ME };
+    });
+    await svc.auth.signOut();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/auth/logout' });
+    expect(bearer(calls[0])).toBe('Bearer access-1');
+    expect(store.value).toBeNull();
+    expect(onSignedOut).not.toHaveBeenCalled();
+    await rejects(svc.spaces.list(), 'session_expired');
+  });
+});
+
+describe('signing out while requests are in flight', () => {
+  it('signOut clears the tokens before /auth/logout answers, and a refresh that lands later writes nothing back', async () => {
+    let finishRefresh!: () => void;
+    let finishLogout!: () => void;
+    const { svc, store, onSignedOut } = make(async (c) => {
+      if (c.path === '/auth/refresh') {
+        await new Promise<void>((resolve) => (finishRefresh = resolve));
+        return { body: pair(2) };
+      }
+      if (c.path === '/auth/logout') {
+        await new Promise<void>((resolve) => (finishLogout = resolve));
+        return { status: 204 };
+      }
+      return fail(401, 'token_expired', 'Access token expired.');
+    });
+    const list = rejects(svc.spaces.list(), 'session_expired');
+    await sleep(5); // the refresh is now waiting for the server
+    await svc.auth.signOut(); // resolves without waiting for /auth/logout
+    expect(store.value).toBeNull();
+    finishRefresh();
+    await list;
+    finishLogout();
+    await sleep(5);
+    expect(store.value).toBeNull();
+    expect(await svc.auth.restore()).toBeNull();
+    expect(onSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('a late session_expired for the previous user does not sign out the next one', async () => {
+    let finishOld!: () => void;
+    const { svc, store, onSignedOut } = make(
+      async (c) => {
+        if (c.path === '/auth/login') return { body: pair(2) };
+        if (c.path === '/auth/logout') return { status: 204 };
+        if (bearer(c) === 'Bearer access-1') {
+          await new Promise<void>((resolve) => (finishOld = resolve));
+          return fail(401, 'session_expired', 'You were signed out after 10 minutes of inactivity.');
+        }
+        return { body: c.path === '/users/me' ? ME : HOME };
+      },
+      memoryStore(tokens(1)),
+    );
+    const old = rejects(svc.spaces.list(), 'session_expired'); // sent with the first user's token
+    await sleep(5);
+    await svc.auth.signOut();
+    await svc.auth.signIn('kabir.r', 'demo1234');
+    finishOld();
+    await old;
+    expect(onSignedOut).not.toHaveBeenCalled();
+    expect(store.value).toMatchObject({ access: 'access-2' });
+    expect(await svc.spaces.list()).toHaveLength(3);
+  });
+});
+
+describe('the session', () => {
+  it('single-flight refresh: parallel token_expired makes one /auth/refresh and retries each request once', async () => {
+    let valid = 'access-0'; // the stored access-1 is already expired
+    const { svc, calls, store } = make(async (c) => {
+      if (c.path === '/auth/refresh') {
+        await sleep(5);
+        expect(c.body).toEqual({ refresh_token: 'refresh-1' });
+        valid = 'access-2';
+        return { body: pair(2) };
+      }
+      if (bearer(c) !== `Bearer ${valid}`) return fail(401, 'token_expired', 'Access token expired. Refresh it.');
+      return { body: c.path === '/spaces' ? HOME : { unread_count: 3 } };
+    });
+    const [list, unread] = await Promise.all([svc.spaces.list(), svc.notifications.unreadCount()]);
+    expect(list).toHaveLength(3);
+    expect(unread).toBe(3);
+    expect(calls.filter((c) => c.path === '/auth/refresh')).toHaveLength(1);
+    expect(calls.filter((c) => c.path === '/spaces')).toHaveLength(2);
+    expect(calls.filter((c) => c.path.startsWith('/notifications'))).toHaveLength(2);
+    expect(store.value).toMatchObject({ access: 'access-2', refresh: 'refresh-2', idleSeconds: 600 });
+  });
+
+  it('a token_expired that arrives after another request already refreshed retries without refreshing again', async () => {
+    let valid = 'access-0'; // the stored access-1 is already expired
+    const { svc, calls } = make(async (c) => {
+      if (c.path === '/auth/refresh') {
+        await sleep(5);
+        valid = 'access-2';
+        return { body: pair(2) };
+      }
+      if (bearer(c) !== `Bearer ${valid}`) {
+        if (c.path.startsWith('/notifications')) await sleep(40); // this 401 is slow: it lands after the refresh finished
+        return fail(401, 'token_expired', 'Access token expired. Refresh it.');
+      }
+      return { body: c.path === '/spaces' ? HOME : { unread_count: 1 } };
+    });
+    await Promise.all([svc.spaces.list(), svc.notifications.unreadCount()]);
+    expect(calls.filter((c) => c.path === '/auth/refresh')).toHaveLength(1);
+    expect(calls.filter((c) => c.path.startsWith('/notifications'))).toHaveLength(2);
+  });
+
+  it('a request that is still token_expired after the refresh signs out instead of looping', async () => {
+    const { svc, calls, onSignedOut } = make((c) => (c.path === '/auth/refresh' ? { body: pair(2) } : fail(401, 'token_expired', 'Access token expired.')));
+    await rejects(svc.spaces.list(), 'session_expired');
+    expect(calls.map((c) => c.path)).toEqual(['/spaces', '/auth/refresh', '/spaces']);
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('session_expired signs out: onSignedOut once, the store cleared, every caller rejected', async () => {
+    const message = 'You were signed out after 10 minutes of inactivity.';
+    const { svc, calls, store, onSignedOut } = make(() => fail(401, 'session_expired', message));
+    const [a, b] = await Promise.all([rejects(svc.spaces.list(), 'session_expired'), rejects(svc.notifications.list(), 'session_expired')]);
+    expect(a.message).toBe(message);
+    expect(b.message).toBe(message);
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    expect(onSignedOut).toHaveBeenCalledWith(message);
+    expect(store.value).toBeNull();
+    const sent = calls.length;
+    await rejects(svc.spaces.list(), 'session_expired'); // nobody signed in: fails without a request, and without a second callback
+    expect(calls).toHaveLength(sent);
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['invalid_token', 'not_authenticated', 'invalid_refresh_token'])('%s also signs out', async (code) => {
+    const { svc, store, onSignedOut } = make(() => fail(401, code, 'Please sign in again.'));
+    await rejects(svc.spaces.list(), 'session_expired');
+    expect(onSignedOut).toHaveBeenCalledWith('Please sign in again.');
+    expect(store.value).toBeNull();
+  });
+
+  it('a refresh refused with invalid_refresh_token signs out', async () => {
+    const { svc, store, onSignedOut } = make((c) =>
+      c.path === '/auth/refresh' ? fail(401, 'invalid_refresh_token', 'Invalid refresh token. Please sign in again.') : fail(401, 'token_expired', 'Access token expired.'),
+    );
+    await rejects(svc.spaces.list(), 'session_expired');
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    expect(store.value).toBeNull();
+  });
+
+  it('network failure keeps session: fetch rejects, the code is network and the tokens stay', async () => {
+    let down = true;
+    const { svc, store, onSignedOut } = make(() => {
+      if (down) throw new TypeError('Network request failed');
+      return { body: HOME };
+    });
+    await rejects(svc.spaces.list(), 'network');
+    expect(store.value).toEqual(tokens(1));
+    expect(onSignedOut).not.toHaveBeenCalled();
+    down = false;
+    expect(await svc.spaces.list()).toHaveLength(3); // still signed in once the server is back
+  });
+
+  it('a refresh that cannot reach the server keeps the session too', async () => {
+    const { svc, store, onSignedOut } = make((c) => {
+      if (c.path === '/auth/refresh') throw new TypeError('Network request failed');
+      return fail(401, 'token_expired', 'Access token expired.');
+    });
+    await rejects(svc.spaces.list(), 'network');
+    expect(store.value).toEqual(tokens(1));
+    expect(onSignedOut).not.toHaveBeenCalled();
+  });
+
+  it('a request that takes longer than the timeout is aborted and reports network', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchImpl = ((_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(new Error('aborted'))))) as unknown as typeof fetch;
+      const store = memoryStore(tokens(1));
+      const svc = createServerServices({ baseUrl: BASE, tokenStore: store, fetchImpl, now: () => NOW, onSignedOut: jest.fn() });
+      const outcome = rejects(svc.spaces.list(), 'network');
+      await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await outcome;
+      expect(store.value).toEqual(tokens(1));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('every request carries the Bearer token; each success moves lastRequestAt and calls onActivity', async () => {
+    const { svc, calls, store, clock, onActivity } = make(() => ({ body: HOME }), memoryStore(tokens(1)), `${BASE}/`);
+    clock.now = NOW + 90_000;
+    await svc.spaces.list();
+    expect(calls[0].path).toBe('/spaces'); // the trailing slash of baseUrl is dropped
+    expect(bearer(calls[0])).toBe('Bearer access-1');
+    expect(store.value?.lastRequestAt).toBe(NOW + 90_000);
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed request does not count as activity', async () => {
+    const { svc, store, clock, onActivity } = make(() => fail(500, 'internal_error', 'Something went wrong on our side.'));
+    clock.now = NOW + 60_000;
+    await rejects(svc.spaces.list(), 'unknown');
+    expect(store.value?.lastRequestAt).toBe(NOW);
+    expect(onActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('errors', () => {
+  it.each([
+    [404, 'space_not_found', 'not_found'],
+    [404, 'notification_not_found', 'not_found'],
+    [404, 'not_found', 'not_found'],
+    [422, 'validation_error', 'validation_error'],
+    [500, 'internal_error', 'unknown'],
+    [405, 'method_not_allowed', 'unknown'],
+    [409, 'username_taken', 'username_taken'],
+  ])('%i %s becomes %s', async (status, code, expected) => {
+    const { svc } = make(() => fail(status, code, 'Server message.'));
+    const err = await rejects(svc.spaces.get('1'), expected);
+    expect(err.message).toBe('Server message.');
+  });
+
+  it('keeps the field list of a validation error and the usernames of an unknown_usernames error', async () => {
+    const fields = [{ field: 'name', message: 'Too long' }];
+    const a = make(() => fail(422, 'validation_error', 'Some fields are invalid.', { fields }));
+    expect((await rejects(a.svc.spaces.get('1'), 'validation_error')).extra).toEqual({ fields });
+
+    const b = make(() => fail(422, 'unknown_usernames', 'Some of these usernames do not exist.', { usernames: ['ghost'] }));
+    const err = await rejects(b.svc.spaces.create({ name: 'Trip', icon: 'trip', currency: 'INR', memberIds: ['ghost'] }), 'validation_error');
+    expect(err.extra).toEqual({ usernames: ['ghost'] });
+  });
+
+  it('a reply that is not the error envelope is unknown', async () => {
+    const html = make(() => ({ status: 502, body: '<html>Bad gateway</html>' }));
+    expect((await rejects(html.svc.spaces.list(), 'unknown')).message).toMatch(/something went wrong/i);
+    const garbage = make(() => ({ status: 200, body: '<html>captive portal</html>' }));
+    await rejects(garbage.svc.spaces.list(), 'unknown');
+  });
+});
+
+describe('spaces', () => {
+  it('list maps the cards; overall keeps the server order', async () => {
+    const { svc } = make(() => ({ body: HOME }));
+    const rows = await svc.spaces.list();
+    expect(rows.map((r) => r.space.name)).toEqual(['Flat 4B', 'Dubai stopover', 'Sunday cricket']);
+    expect(rows[1]).toEqual({
+      space: { id: '4', name: 'Dubai stopover', icon: 'home', currency: 'USD', ownerId: '', memberIds: [], serial: 4, createdAt: Date.parse('2026-11-04T10:00:00Z') },
+      balance: { spaceId: '4', currency: 'USD', netMinor: 3500, pairs: [], openBalances: 1, counterpartyName: 'Meera Shah', counterpartyCount: 1, settled: false },
+      lastActivity: Date.parse('2026-11-04T10:00:00Z'),
+    });
+    expect(rows[0].balance).toMatchObject({ netMinor: -47334, openBalances: 2, counterpartyName: null, counterpartyCount: 2, settled: false });
+    expect(rows[2].balance).toMatchObject({ netMinor: 0, openBalances: 2, counterpartyCount: 0, settled: false }); // net 0 but two open pairs
+    expect(await svc.spaces.overall()).toEqual([
+      { currency: 'INR', netMinor: 966666, oweMinor: 87334, owedMinor: 1054000 },
+      { currency: 'USD', netMinor: 3500, oweMinor: 0, owedMinor: 3500 },
+    ]);
+  });
+
+  it('an unknown icon key falls back to other', async () => {
+    const { svc } = make(() => ({ body: { overall: [], spaces: [{ ...HOME.spaces[0], icon: 'rocket' }] } }));
+    expect((await svc.spaces.list())[0].space.icon).toBe('other');
+  });
+
+  it('maps space detail', async () => {
+    const { svc, calls } = make((c) => ({ body: c.path === '/users/me' ? ME : GOA }));
+    const { space, members, balance, activity } = await svc.spaces.get('2');
+    expect(calls.map((c) => c.path)).toContain('/spaces/2');
+
+    expect(space).toEqual({ id: '2', name: 'Goa Trip', icon: 'trip', currency: 'INR', ownerId: 'arun.n', memberIds: ['kabir.r', 'arun.n', 'swetha.i', 'priya.m'], serial: 2, createdAt: Date.parse('2026-10-01T06:00:00.123Z') });
+    expect(members.map((m) => [m.id, m.plate, m.email])).toEqual([
+      ['kabir.r', 1, 'kabir.r@example.com'], // plate = ((position − 1) % 6) + 1; the email is only known for the viewer
+      ['arun.n', 2, null],
+      ['swetha.i', 3, null],
+      ['priya.m', 4, null],
+    ]);
+    expect(members[1]).toEqual({ id: 'arun.n', username: 'arun.n', name: 'Arun Nair', email: null, emailVerified: true, avatarUrl: null, plate: 2 });
+
+    // + = they owe the viewer; lines that do not involve the viewer are left out; member order.
+    expect(balance).toEqual({
+      spaceId: '2',
+      currency: 'INR',
+      netMinor: 150000,
+      pairs: [
+        { userId: 'arun.n', name: 'Arun Nair', netMinor: -300000 },
+        { userId: 'priya.m', name: 'Priya Menon', netMinor: 450000 },
+      ],
+      openBalances: 2,
+      counterpartyName: 'Priya Menon',
+      counterpartyCount: 1,
+      settled: false,
+    });
+
+    // Newest first: the payment of 4 Nov, then 3 Nov (server order kept), 2 Nov, the 25 Oct payment, 20 Oct.
+    expect(activity.map((a) => `${a.kind}:${a.id}`)).toEqual(['payment:6', 'expense:14', 'expense:13', 'expense:12', 'payment:5', 'expense:11']);
+    const row = (id: string) => activity.find((a) => a.kind === 'expense' && a.id === id);
+    expect(row('11')).toMatchObject({ description: 'Villa', amountMinor: 1200000, paidById: 'arun.n', paidByName: 'Arun Nair', myPartMinor: -300000, myResponse: 'accepted', disputed: false }); // I owe my share
+    expect(row('12')).toMatchObject({ paidById: 'kabir.r', myPartMinor: 450000 }); // I paid: the others owe me amount − my share
+    expect(row('13')).toMatchObject({ myPartMinor: null, myResponse: null, disputed: true }); // not involved
+    expect(row('14')).toMatchObject({ myPartMinor: 50000, myResponse: null }); // I paid and have no share: all of it is owed to me
+    expect(activity.find((a) => a.kind === 'payment' && a.id === '6')).toEqual({
+      kind: 'payment',
+      id: '6',
+      date: Date.parse('2026-11-04T09:30:00Z'),
+      fromId: 'priya.m',
+      fromName: 'Priya Menon',
+      toId: 'kabir.r',
+      toName: 'Kabir Rao',
+      amountMinor: 100000,
+      status: 'pending',
+    });
+    // An expense's YYYY-MM-DD is that calendar day on the device (local midnight), whatever the time zone.
+    const day = new Date(row('13')!.date);
+    expect([day.getFullYear(), day.getMonth(), day.getDate(), day.getHours()]).toEqual([2026, 10, 3, 0]);
+  });
+
+  it('a share of 0 that someone else paid is 0, not −0', async () => {
+    const detail = { ...GOA, expenses: [expense(20, 'Free', 1000, ARUN, '2026-11-01', 0)] };
+    const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : detail }));
+    expect(Object.is((await svc.spaces.get('2')).activity.find((a) => a.kind === 'expense')!.myPartMinor, 0)).toBe(true);
+  });
+
+  it('keeps the viewer’s open pair with someone who has left, after the members', async () => {
+    const ROHAN = person('rohan.d', 'Rohan Das'); // not a member any more
+    const pairwise = [...GOA.pairwise, { debtor: KABIR, creditor: ROHAN, amount_minor: 5000 }];
+    const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : { ...GOA, balance_minor: 145000, pairwise } }));
+    const { balance } = await svc.spaces.get('2');
+    expect(balance.pairs.map((p) => [p.userId, p.netMinor])).toEqual([
+      ['arun.n', -300000],
+      ['priya.m', 450000],
+      ['rohan.d', -5000],
+    ]);
+    expect(balance.openBalances).toBe(3);
+  });
+
+  it('a space where every pair is zero is settled with no counterparty', async () => {
+    const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : { ...GOA, balance_minor: 0, pairwise: [], expenses: [], settlements: [] } }));
+    const d = await svc.spaces.get('2');
+    expect(d.balance).toMatchObject({ pairs: [], openBalances: 0, counterpartyName: null, counterpartyCount: 0, settled: true });
+    expect(d).toMatchObject({ settledMemberIds: ['kabir.r', 'arun.n', 'swetha.i', 'priya.m'], allSettled: true });
+  });
+
+  it('who is settled reads every pair in the space, the viewer’s or not', async () => {
+    // The viewer is square with everyone, but Swetha owes Arun: neither of them is settled, and the space isn't.
+    const pairwise = [{ debtor: SWETHA, creditor: ARUN, amount_minor: 10000 }];
+    const { svc } = make((c) => ({ body: c.path === '/users/me' ? ME : { ...GOA, balance_minor: 0, pairwise } }));
+    const d = await svc.spaces.get('2');
+    expect(d.balance.settled).toBe(true);
+    expect(d).toMatchObject({ settledMemberIds: ['kabir.r', 'priya.m'], allSettled: false });
+
+    const goa = await make((c) => ({ body: c.path === '/users/me' ? ME : GOA })).svc.spaces.get('2');
+    expect(goa).toMatchObject({ settledMemberIds: [], allSettled: false }); // all four are in an open pair
+  });
+
+  it('create posts the usernames and returns the new space', async () => {
+    const { svc, calls } = make((c) => (c.path === '/users/me' ? { body: ME } : { status: 201, body: { ...GOA, id: 9, name: 'Trip', currency: 'USD', owner_username: 'kabir.r' } }));
+    const space = await svc.spaces.create({ name: 'Trip', icon: 'trip', currency: 'USD', memberIds: ['meera.s'] });
+    const post = calls.find((c) => c.method === 'POST')!;
+    expect(post.path).toBe('/spaces');
+    expect(post.body).toEqual({ name: 'Trip', icon: 'trip', currency: 'USD', usernames: ['meera.s'] });
+    expect(space).toMatchObject({ id: '9', name: 'Trip', currency: 'USD', ownerId: 'kabir.r' });
+  });
+});
+
+describe('notifications and people', () => {
+  it('maps the cards; the id and ref are strings, userId is the signed-in username', async () => {
+    const { svc, calls } = make((c) =>
+      c.path === '/users/me'
+        ? { body: ME }
+        : { body: { items: [note(7), note(6, { type: 'space_deleted', space_id: null, ref_id: null, needs_answer: false, read: true })], next_before: null, unread_count: 1 } },
+    );
+    const list = await svc.notifications.list();
+    expect(calls.find((c) => c.path.startsWith('/notifications'))!.path).toBe('/notifications?limit=50');
+    expect(list[0]).toEqual({
+      id: '7',
+      userId: 'kabir.r',
+      type: 'expense_share',
+      message: 'Swetha added ‘Dinner’ — your share is ₹14',
+      spaceId: '1',
+      spaceName: 'Flat 4B',
+      refId: '9',
+      needsAnswer: true,
+      read: false,
+      createdAt: Date.parse('2026-11-05T08:00:00Z'),
+    });
+    expect(list[1]).toMatchObject({ id: '6', spaceId: null, refId: null, read: true });
+  });
+
+  it('unreadCount, markRead and markAllRead', async () => {
+    const { svc, calls } = make((c) => {
+      if (c.path === '/notifications/read-all') return { body: { updated_count: 2 } };
+      if (c.method === 'PATCH') return { body: note(7, { read: true }) };
+      return { body: { unread_count: 4 } };
+    });
+    expect(await svc.notifications.unreadCount()).toBe(4);
+    await svc.notifications.markRead('7');
+    expect(await svc.notifications.markAllRead()).toBeUndefined(); // the count is ignored
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /notifications/unread-count', 'PATCH /notifications/7', 'PATCH /notifications/read-all']);
+    expect(calls[1].body).toEqual({ read: true });
+  });
+
+  it('search sends the username as typed, without a leading @, and nothing for a blank query', async () => {
+    const { svc, calls } = make((c) => ({
+      body: c.path === '/users/me' ? ME : c.path.includes('rohan') ? [{ username: 'rohan.d', name: 'Rohan Das', is_friend: true }] : [],
+    }));
+    const found = await svc.users.search('rohan');
+    expect(found).toEqual([{ id: 'rohan.d', username: 'rohan.d', name: 'Rohan Das', email: null, emailVerified: true, avatarUrl: null, plate: expect.any(Number) }]);
+    expect(found[0].plate).toBeGreaterThanOrEqual(1);
+    expect(found[0].plate).toBeLessThanOrEqual(6);
+
+    await svc.users.search('98300 45566'); // digits are just a username prefix: no number parsing
+    await svc.users.search('@roha');
+    await svc.users.search('  ');
+    const paths = calls.filter((c) => c.path.startsWith('/users/search')).map((c) => c.path);
+    expect(paths).toEqual(['/users/search?q=rohan', '/users/search?q=98300%2045566', '/users/search?q=roha']);
+  });
+});
+
+describe('profile and the operations the server cannot do yet', () => {
+  it('profile.get comes from /users/me and getPreferences from the phone', async () => {
+    const { svc } = make(() => ({ body: ME }));
+    expect((await svc.profile.get()).name).toBe('Kabir Rao');
+    expect(await svc.profile.getPreferences()).toEqual({ defaultCurrency: 'INR', theme: 'system', notificationsOn: true });
+  });
+
+  it('getPreferences works before anyone signs in', async () => {
+    const { svc, calls } = make(() => ({ body: ME }), memoryStore());
+    expect(await svc.profile.getPreferences()).toEqual({ defaultCurrency: 'INR', theme: 'system', notificationsOn: true });
+    expect(calls).toHaveLength(0);
+  });
+
+  // ---- sign up, forgot password, and the live checks: made without a session ----
+
+  it('signUp posts the whole form (with the phone) with no session, and returns the pending id', async () => {
+    const { svc, calls } = make(() => ({ status: 202, body: { pending_id: 'su_abc', masked_email: 'ka*****@example.com', expires_in_seconds: 300, resend_after_seconds: 30 } }), memoryStore(null));
+    const out = await svc.auth.signUp({ username: ' kabir.r ', name: 'Kabir Rao', email: 'kabir.r@example.com', phone: '+919876543210', password: 'secret123' });
+    expect(out).toEqual({ pendingId: 'su_abc', maskedEmail: 'ka*****@example.com' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method + ' ' + calls[0].path).toBe('POST /auth/register');
+    expect(bearer(calls[0])).toBeUndefined();
+    expect(calls[0].body).toEqual({
+      username: 'kabir.r',
+      name: 'Kabir Rao',
+      email: 'kabir.r@example.com',
+      phone: '+919876543210',
+      password: 'secret123',
+      confirm_password: 'secret123',
+    });
+  });
+
+  it('signUp shows the server’s reasons: a taken phone, and the fields that were refused', async () => {
+    const taken = make(() => fail(409, 'phone_taken', 'Phone number already registered'), memoryStore(null));
+    await rejects(taken.svc.auth.signUp({ username: 'a1b', name: 'A', email: 'a@example.com', phone: '+919876543210', password: 'secret123' }), 'phone_taken');
+    const bad = make(() => fail(422, 'validation_error', 'Some fields are invalid.', { fields: [{ field: 'phone', message: 'Enter a valid phone number' }] }), memoryStore(null));
+    const err = await rejects(bad.svc.auth.signUp({ username: 'a1b', name: 'A', email: 'a@example.com', phone: 'x', password: 'secret123' }), 'validation_error');
+    expect(err.extra?.fields).toEqual([{ field: 'phone', message: 'Enter a valid phone number' }]);
+  });
+
+  it('verifySignUpOtp signs the new person in: it keeps the tokens and loads /users/me', async () => {
+    const store = memoryStore(null);
+    const { svc, calls } = make((c) => (c.path === '/auth/register/verify' ? { status: 201, body: pair(7) } : { body: ME }), store);
+    const user = await svc.auth.verifySignUpOtp('su_abc', '123456');
+    expect(user.username).toBe('kabir.r');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /auth/register/verify', 'GET /users/me']);
+    expect(calls[0].body).toEqual({ pending_id: 'su_abc', code: '123456' });
+    expect(bearer(calls[1])).toBe('Bearer access-7');
+    expect(store.value?.refresh).toBe('refresh-7');
+  });
+
+  it('a wrong sign-up code is the server’s invalid_code, and no tokens are kept', async () => {
+    const store = memoryStore(null);
+    const { svc } = make(() => fail(400, 'invalid_code', 'That code is incorrect'), store);
+    await rejects(svc.auth.verifySignUpOtp('su_abc', '000000'), 'invalid_code');
+    expect(store.value).toBeNull();
+  });
+
+  it('resendOtp, the live checks and the three forgot-password steps each make one unauthenticated call', async () => {
+    const { svc, calls } = make(
+      (c) => {
+        if (c.path === '/auth/otp/resend') return { body: { expires_in_seconds: 300, resend_after_seconds: 30 } };
+        if (c.path.startsWith('/auth/check-')) return { body: { available: c.path.includes('taken') ? false : true } };
+        if (c.path === '/auth/forgot') return { status: 202, body: { reset_id: 'pw_x', masked_email: 'ka*****@example.com', message: 'ok', expires_in_seconds: 300, resend_after_seconds: 30 } };
+        if (c.path === '/auth/verify-otp') return { body: { reset_token: 'tok', expires_in_seconds: 600 } };
+        return { body: { message: 'Password updated. Please sign in.', username: 'kabir.r' } };
+      },
+      memoryStore(null),
+    );
+    expect(await svc.auth.resendOtp('su_abc')).toEqual({ resendAfterSeconds: 30 });
+    expect(await svc.auth.checkUsername('free.one')).toBe(true);
+    expect(await svc.auth.checkUsername('taken.one')).toBe(false);
+    expect(await svc.auth.checkEmail('a@example.com')).toBe(true);
+    expect(await svc.auth.requestResetOtp(' kabir.r ')).toEqual({ resetId: 'pw_x', maskedEmail: 'ka*****@example.com' });
+    expect(await svc.auth.verifyResetOtp('pw_x', '123456')).toEqual({ resetToken: 'tok' });
+    expect(await svc.auth.resetPassword('tok', 'newpass99')).toEqual({ username: 'kabir.r' });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'POST /auth/otp/resend',
+      'GET /auth/check-username?username=free.one',
+      'GET /auth/check-username?username=taken.one',
+      'GET /auth/check-email?email=a%40example.com',
+      'POST /auth/forgot',
+      'POST /auth/verify-otp',
+      'POST /auth/reset',
+    ]);
+    expect(calls.every((c) => bearer(c) === undefined)).toBe(true);
+    expect(calls[4].body).toEqual({ username: 'kabir.r' });
+    expect(calls[5].body).toEqual({ reset_id: 'pw_x', code: '123456' });
+    expect(calls[6].body).toEqual({ reset_token: 'tok', new_password: 'newpass99', confirm_password: 'newpass99' });
+  });
+
+  // ---- expenses ----
+
+  const EXPENSE_SPACE = { id: 2, name: 'Goa Trip', icon: 'trip', currency: 'INR', owner_username: 'arun.n', created_at: '2026-10-01T06:00:00.123456Z' };
+  const DETAIL = {
+    id: 21,
+    description: 'Dinner',
+    amount_minor: 90000,
+    split_type: 'exact',
+    paid_by: KABIR,
+    created_by: KABIR,
+    date: '2026-11-03',
+    created_at: '2026-11-03T08:00:00Z',
+    updated_at: '2026-11-03T08:05:00.123456Z',
+    disputed: false,
+    space: EXPENSE_SPACE,
+    members: [
+      { ...KABIR, position: 1 },
+      { ...ARUN, position: 2 },
+    ],
+    shares: [
+      { user: KABIR, amount_minor: 30000, status: 'accepted', responded_at: '2026-11-03T08:00:00Z', input: 300 },
+      { user: ARUN, amount_minor: 60000, status: 'pending', responded_at: null, input: 600 },
+      { user: SWETHA, amount_minor: 0, status: 'accepted', responded_at: null, input: null }, // since left the space
+    ],
+  };
+
+  it('expenses.get maps the expense, its space and everyone it names, even someone who has left', async () => {
+    const { svc, calls } = make((c) => ({ body: c.path === '/users/me' ? ME : DETAIL }));
+    const { expense, space, members } = await svc.expenses.get('21');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /expenses/21', 'GET /users/me']);
+    expect(expense).toEqual({
+      id: '21',
+      spaceId: '2',
+      description: 'Dinner',
+      amountMinor: 90000,
+      paidBy: 'kabir.r',
+      splitType: 'exact',
+      shares: [
+        { userId: 'kabir.r', input: 300, amountMinor: 30000, response: 'accepted' },
+        { userId: 'arun.n', input: 600, amountMinor: 60000, response: 'pending' },
+        { userId: 'swetha.i', input: null, amountMinor: 0, response: 'accepted' },
+      ],
+      date: new Date(2026, 10, 3).getTime(),
+      createdBy: 'kabir.r',
+      updatedAt: Date.parse('2026-11-03T08:05:00.123Z'),
+    });
+    expect(space).toMatchObject({ id: '2', ownerId: 'arun.n', memberIds: ['kabir.r', 'arun.n'] });
+    expect(members.map((m) => m.username)).toEqual(['kabir.r', 'arun.n', 'swetha.i']);
+  });
+
+  it('expenses.create sends what was typed, the day on the device, and one share when a shares row is empty', async () => {
+    const { svc, calls } = make(() => ({ status: 201, body: DETAIL }));
+    const created = await svc.expenses.create({
+      spaceId: '2',
+      description: 'Dinner',
+      amountMinor: 90000,
+      paidBy: 'kabir.r',
+      splitType: 'shares',
+      shares: [
+        { userId: 'kabir.r', input: 2, amountMinor: 60000, response: 'accepted' },
+        { userId: 'arun.n', input: null, amountMinor: 30000, response: 'pending' },
+      ],
+      date: new Date(2026, 10, 3).getTime(),
+    });
+    expect(created.id).toBe('21');
+    expect(`${calls[0].method} ${calls[0].path}`).toBe('POST /spaces/2/expenses');
+    expect(calls[0].body).toEqual({
+      description: 'Dinner',
+      amount_minor: 90000,
+      paid_by: 'kabir.r',
+      split_type: 'shares',
+      shares: [
+        { username: 'kabir.r', input: 2 },
+        { username: 'arun.n', input: 1 },
+      ],
+      date: '2026-11-03',
+    });
+  });
+
+  it('an equal split sends no typed amounts; edit, delete, accept and reject use their own endpoints', async () => {
+    const { svc, calls } = make((c) => (c.method === 'DELETE' ? { status: 204 } : { body: DETAIL }));
+    const input = {
+      spaceId: '2',
+      description: 'Dinner',
+      amountMinor: 90000,
+      paidBy: 'kabir.r',
+      splitType: 'equal' as const,
+      shares: [
+        { userId: 'kabir.r', input: null, amountMinor: 45000, response: 'accepted' as const },
+        { userId: 'arun.n', input: null, amountMinor: 45000, response: 'pending' as const },
+      ],
+      date: new Date(2026, 10, 3).getTime(),
+    };
+    await svc.expenses.update('21', input);
+    await svc.expenses.remove('21');
+    await svc.expenses.acceptShare('21');
+    await svc.expenses.rejectShare('21');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['PUT /expenses/21', 'DELETE /expenses/21', 'POST /expenses/21/accept', 'POST /expenses/21/reject']);
+    expect(calls[0].body.shares).toEqual([
+      { username: 'kabir.r', input: null },
+      { username: 'arun.n', input: null },
+    ]);
+  });
+
+  it('a refused expense keeps the server’s code (a rule broken, someone else’s expense)', async () => {
+    const { svc } = make(() => fail(403, 'forbidden', 'Only the person who added this expense can change it', { reason: 'not_creator' }));
+    await rejects(svc.expenses.remove('21'), 'forbidden');
+    const gone = make(() => fail(404, 'expense_not_found', 'Expense not found.'));
+    await rejects(gone.svc.expenses.get('21'), 'not_found');
+  });
+
+  // ---- profile ----
+
+  it('profile.update changes only the name on the server, then reads the profile again', async () => {
+    const { svc, calls } = make((c) => ({ body: c.method === 'PATCH' ? { ...ME, name: 'Kabir R' } : { ...ME, name: 'Kabir R' } }));
+    const user = await svc.profile.update({ name: 'Kabir R', avatarUrl: 'file:///photo.jpg' });
+    expect(user.name).toBe('Kabir R');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['PATCH /users/me', 'GET /users/me']);
+    expect(calls[0].body).toEqual({ name: 'Kabir R' }); // the photo is not sent
+  });
+
+  it('the default currency and the notifications switch are kept on the phone, with no request', async () => {
+    await AsyncStorage.clear();
+    const { svc, calls } = make(() => ({ body: ME }), memoryStore(null));
+    await svc.profile.setPreferences({ defaultCurrency: 'USD', theme: 'dark', notificationsOn: false });
+    expect(await svc.profile.getPreferences()).toEqual({ defaultCurrency: 'USD', theme: 'system', notificationsOn: false });
+    expect(calls).toHaveLength(0);
+    await AsyncStorage.clear();
+    expect(await svc.profile.getPreferences()).toEqual({ defaultCurrency: 'INR', theme: 'system', notificationsOn: true });
+  });
+});
+
+describe('settle up over HTTP', () => {
+  const HEADER = { id: 2, name: 'Goa Trip', icon: 'trip', currency: 'INR', owner_username: 'arun.n', created_at: '2026-10-01T06:00:00.123456Z' };
+  const settlement = (extra: object = {}) => ({
+    id: 9,
+    space: HEADER,
+    from_user: KABIR,
+    to_user: ARUN,
+    amount_minor: 4000,
+    status: 'pending',
+    created_at: '2026-11-05T09:00:00Z',
+    answered_at: null,
+    ...extra,
+  });
+
+  it('payees maps the people the viewer owes, with what is owed and the most that can be recorded', async () => {
+    const { svc, calls } = make(() => ({ body: [{ user: ARUN, owed_minor: 300000, max_minor: 250000 }] }));
+    const [payee] = await svc.settlements.payees('2');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /spaces/2/payees']);
+    expect(payee).toMatchObject({ user: { id: 'arun.n', username: 'arun.n', name: 'Arun Nair' }, owedMinor: 300000, maxMinor: 250000 });
+  });
+
+  it('create posts to_username and amount_minor and returns the pending payment', async () => {
+    const { svc, calls } = make(() => ({ status: 201, body: settlement() }));
+    const created = await svc.settlements.create({ spaceId: '2', toUserId: 'arun.n', amountMinor: 4000 });
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/spaces/2/settlements', body: { to_username: 'arun.n', amount_minor: 4000 } });
+    expect(created).toEqual({
+      id: '9',
+      spaceId: '2',
+      fromUserId: 'kabir.r',
+      toUserId: 'arun.n',
+      amountMinor: 4000,
+      date: Date.parse('2026-11-05T09:00:00Z'),
+      status: 'pending',
+      answeredAt: null,
+    });
+  });
+
+  it('get maps the payment screen: the payment, its space, and both people', async () => {
+    const { svc, calls } = make(() => ({ body: settlement({ status: 'confirmed', answered_at: '2026-11-06T10:00:00Z' }) }));
+    const d = await svc.settlements.get('9');
+    expect(calls[0]).toMatchObject({ method: 'GET', path: '/settlements/9' });
+    expect(d.settlement).toMatchObject({ id: '9', status: 'confirmed', answeredAt: Date.parse('2026-11-06T10:00:00Z') });
+    expect(d.space).toMatchObject({ id: '2', name: 'Goa Trip', currency: 'INR', ownerId: 'arun.n' });
+    expect([d.from.id, d.to.id]).toEqual(['kabir.r', 'arun.n']);
+  });
+
+  it('confirm, reject and cancel each post to their own path', async () => {
+    const { svc, calls } = make(() => ({ body: settlement() }));
+    await svc.settlements.confirm('9');
+    await svc.settlements.reject('9');
+    await svc.settlements.cancel('9');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /settlements/9/confirm', 'POST /settlements/9/reject', 'POST /settlements/9/cancel']);
+  });
+
+  it('keeps the server’s own words for a refusal, and maps the not-found codes', async () => {
+    const owes = make(() => fail(403, 'forbidden', 'You don’t owe Arun anything in this space', { reason: 'owes_nothing' }));
+    const refused = await rejects(owes.svc.settlements.create({ spaceId: '2', toUserId: 'arun.n', amountMinor: 100 }), 'forbidden');
+    expect(refused.message).toBe('You don’t owe Arun anything in this space');
+    expect(refused.extra).toEqual({ reason: 'owes_nothing' });
+
+    const gone = make(() => fail(404, 'settlement_not_found', 'Payment not found.'));
+    await rejects(gone.svc.settlements.get('9'), 'not_found');
+    const nobody = make(() => fail(404, 'person_not_found', 'Person not found.'));
+    await rejects(nobody.svc.settlements.create({ spaceId: '2', toUserId: 'ghost', amountMinor: 100 }), 'not_found');
+  });
+});
+
+describe('transactions over HTTP', () => {
+  const HOME = { space_id: 2, space_name: 'Goa Trip', currency: 'INR' };
+  const txExpense = (id: number, day: string, extra: object = {}) => ({
+    ...expense(id, `Bill ${id}`, 30000, ARUN, day, 10000),
+    kind: 'expense',
+    ...HOME,
+    ...extra,
+  });
+  const txPayment = (id: number, at: string, extra: object = {}) => ({
+    kind: 'payment',
+    id,
+    from_user: KABIR,
+    to_user: ARUN,
+    amount_minor: 4000,
+    status: 'pending',
+    created_at: at,
+    answered_at: null,
+    ...HOME,
+    ...extra,
+  });
+  type Page = { items: object[]; next_before: string | null };
+  /** Answers /users/me, and /transactions from `pages`, keyed by the `before` marker it was asked with ('' for the first page). */
+  const serverWith = (pages: Record<string, Page>) =>
+    make((c) => {
+      if (c.path === '/users/me') return { body: ME };
+      const before = new URLSearchParams(c.path.split('?')[1]).get('before') ?? '';
+      return { body: pages[before] };
+    });
+
+  it('asks for the list a page at a time and maps each row as the Space page does', async () => {
+    const { svc, calls } = serverWith({ '': { items: [txPayment(9, '2026-11-05T09:00:00Z'), txExpense(7, '2026-11-03')], next_before: null } });
+    const rows = await svc.transactions.list({ kind: 'all' });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /users/me', `GET /transactions?kind=all&limit=${TRANSACTIONS_PAGE}`]);
+    expect(rows).toEqual([
+      {
+        kind: 'payment',
+        id: '9',
+        date: Date.parse('2026-11-05T09:00:00Z'),
+        fromId: 'kabir.r',
+        fromName: 'Kabir Rao',
+        toId: 'arun.n',
+        toName: 'Arun Nair',
+        amountMinor: 4000,
+        status: 'pending',
+        spaceId: '2',
+        spaceName: 'Goa Trip',
+        currency: 'INR',
+      },
+      {
+        kind: 'expense',
+        id: '7',
+        description: 'Bill 7',
+        date: new Date(2026, 10, 3).getTime(), // that day on this device
+        amountMinor: 30000,
+        paidById: 'arun.n',
+        paidByName: 'Arun Nair',
+        myPartMinor: -10000, // Arun paid and the viewer's share is 100: they owe it
+        myResponse: 'accepted',
+        disputed: false,
+        spaceId: '2',
+        spaceName: 'Goa Trip',
+        currency: 'INR',
+      },
+    ]);
+  });
+
+  it('follows next_before until the server says there is no more', async () => {
+    const { svc, calls } = serverWith({
+      '': { items: [txExpense(7, '2026-11-09')], next_before: '1.0.5' },
+      '1.0.5': { items: [txExpense(6, '2026-11-08')], next_before: '2.1.6' },
+      '2.1.6': { items: [txExpense(5, '2026-11-07')], next_before: null },
+    });
+    const rows = await svc.transactions.list({ kind: 'all' });
+    expect(rows.map((r) => r.id)).toEqual(['7', '6', '5']);
+    expect(calls.slice(1).map((c) => c.path)).toEqual([
+      `/transactions?kind=all&limit=${TRANSACTIONS_PAGE}`,
+      `/transactions?kind=all&limit=${TRANSACTIONS_PAGE}&before=1.0.5`,
+      `/transactions?kind=all&limit=${TRANSACTIONS_PAGE}&before=2.1.6`,
+    ]);
+  });
+
+  it('passes the kind and the space to the server, and encodes the space', async () => {
+    const { svc, calls } = serverWith({ '': { items: [], next_before: null } });
+    expect(await svc.transactions.list({ kind: 'payments', spaceId: 'a b' })).toEqual([]);
+    expect(calls[1].path).toBe(`/transactions?kind=payments&limit=${TRANSACTIONS_PAGE}&space_id=a%20b`);
+  });
+
+  it('sorts newest first by the date the app shows, keeping the server’s order for equal dates', async () => {
+    const same = '2026-11-05T09:00:00Z';
+    const { svc } = serverWith({
+      '': { items: [txPayment(1, '2026-11-01T09:00:00Z'), txPayment(3, same), txPayment(2, same), txPayment(4, '2026-11-09T09:00:00Z')], next_before: null },
+    });
+    expect((await svc.transactions.list({ kind: 'payments' })).map((r) => r.id)).toEqual(['4', '3', '2', '1']);
+  });
+
+  it('stops after the most pages it is willing to fetch', async () => {
+    const { svc, calls } = make((c) => ({ body: c.path === '/users/me' ? ME : { items: [txExpense(1, '2026-11-03')], next_before: '1.0.1' } }));
+    const rows = await svc.transactions.list({ kind: 'all' });
+    expect(rows).toHaveLength(TRANSACTIONS_MAX_PAGES);
+    expect(calls.filter((c) => c.path.startsWith('/transactions'))).toHaveLength(TRANSACTIONS_MAX_PAGES);
+  });
+
+  it('an older server without the endpoint is "not on this server"; a missing space is only not found', async () => {
+    const older = make((c) => (c.path === '/users/me' ? { body: ME } : fail(404, 'not_found', 'Not Found')));
+    await rejects(older.svc.transactions.list({ kind: 'all' }), 'not_on_server');
+    const gone = make((c) => (c.path === '/users/me' ? { body: ME } : fail(404, 'space_not_found', 'Space not found.')));
+    await rejects(gone.svc.transactions.list({ kind: 'all', spaceId: '9' }), 'not_found');
+  });
+
+  it('any other failure comes through as it is', async () => {
+    const down = make((c) => (c.path === '/users/me' ? { body: ME } : fail(422, 'validation_error', 'Some fields are invalid.', { fields: [{ field: 'before', message: 'no' }] })));
+    await rejects(down.svc.transactions.list({ kind: 'all' }), 'validation_error');
+  });
+});
+
+describe('space settings over HTTP', () => {
+  /** Answers /users/me, and every other request with `reply`. */
+  const answering = (reply: { status?: number; body?: unknown }) => make((c) => (c.path === '/users/me' ? { body: ME } : reply));
+
+  it('update sends only the fields that were given and returns the space', async () => {
+    const { svc, calls } = answering({ body: { ...GOA, name: 'Goa 2' } });
+    const space = await svc.spaces.update('2', { name: 'Goa 2' });
+    expect(calls[1]).toMatchObject({ method: 'PATCH', path: '/spaces/2', body: { name: 'Goa 2' } });
+    expect(Object.keys(calls[1].body)).toEqual(['name']); // the icon and currency were not given, so they are not sent
+    expect(space).toMatchObject({ id: '2', name: 'Goa 2', currency: 'INR', ownerId: 'arun.n' });
+  });
+
+  it('addMembers posts the usernames', async () => {
+    const { svc, calls } = answering({ body: GOA });
+    await expect(svc.spaces.addMembers('2', ['swetha.i', 'priya.m'])).resolves.toBeUndefined();
+    expect(calls[1]).toMatchObject({ method: 'POST', path: '/spaces/2/members', body: { usernames: ['swetha.i', 'priya.m'] } });
+  });
+
+  it('removeMember, leave and remove each call their own endpoint, and the empty replies are fine', async () => {
+    const { svc, calls } = answering({ status: 204 });
+    await expect(svc.spaces.removeMember('2', 'a b')).resolves.toBeUndefined();
+    await expect(svc.spaces.leave('2')).resolves.toBeUndefined();
+    await expect(svc.spaces.remove('2')).resolves.toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['DELETE /spaces/2/members/a%20b', 'POST /spaces/2/leave', 'DELETE /spaces/2']);
+  });
+
+  it('keeps the server’s own words when a rule refuses, and maps the not-found codes', async () => {
+    const owing = answering(fail(403, 'forbidden', 'Settle up first', { reason: 'not_settled' }));
+    const refused = await rejects(owing.svc.spaces.leave('2'), 'forbidden');
+    expect(refused.message).toBe('Settle up first');
+    expect(refused.extra).toEqual({ reason: 'not_settled' });
+
+    const locked = answering(fail(403, 'forbidden', 'Can’t change after expenses are added', { reason: 'has_expenses' }));
+    expect((await rejects(locked.svc.spaces.update('2', { currency: 'USD' }), 'forbidden')).message).toBe('Can’t change after expenses are added');
+
+    const nobody = answering(fail(404, 'member_not_found', 'That person is not in this space.'));
+    await rejects(nobody.svc.spaces.removeMember('2', 'ghost'), 'not_found');
+    const gone = answering(fail(404, 'space_not_found', 'Space not found.'));
+    await rejects(gone.svc.spaces.remove('9'), 'not_found');
+    const unknown = answering(fail(422, 'unknown_usernames', 'Some of these usernames do not exist.', { usernames: ['ghost'] }));
+    expect((await rejects(unknown.svc.spaces.addMembers('2', ['ghost']), 'validation_error')).extra).toEqual({ usernames: ['ghost'] });
+  });
+});
+
+describe('the default token store', () => {
+  const t = tokens(1);
+  const KEY = 'uomi.server.tokens';
+
+  it('keeps one JSON value in SecureStore on a phone', async () => {
+    const store = defaultTokenStore();
+    expect(await store.get()).toBeNull();
+    await store.set(t);
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(KEY, JSON.stringify(t));
+    expect(await store.get()).toEqual(t);
+    expect(await AsyncStorage.getItem(KEY)).toBeNull();
+    await store.clear();
+    expect(await store.get()).toBeNull();
+  });
+
+  it('uses AsyncStorage in a browser, where SecureStore does not exist', async () => {
+    const os = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const store = defaultTokenStore();
+      await store.set(t);
+      expect(JSON.parse((await AsyncStorage.getItem(KEY))!)).toEqual(t);
+      expect(await store.get()).toEqual(t);
+      await store.clear();
+      expect(await AsyncStorage.getItem(KEY)).toBeNull();
+    } finally {
+      os.restore();
+    }
+  });
+
+  it('reads damaged or foreign values as no tokens', async () => {
+    const store = defaultTokenStore();
+    await SecureStore.setItemAsync(KEY, '{not json');
+    expect(await store.get()).toBeNull();
+    await SecureStore.setItemAsync(KEY, JSON.stringify({ access: 1 }));
+    expect(await store.get()).toBeNull();
+    await store.clear();
+  });
+});
