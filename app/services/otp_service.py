@@ -97,31 +97,6 @@ def send_code_email(email: str, code: str) -> None:
         logger.exception("Could not send the one-time code email")
 
 
-FAKE_LOCAL_LENGTHS = range(5, 11)  # a made-up local part is this many characters, like the names real people use
-_FAKE_LOCAL_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
-
-
-def fake_masked_email(db: Session, username: str) -> str:
-    """The masked email shown for a username that does not exist, so the reply looks like any other.
-
-    It is derived from the username under the OTP key: asking again for the same name gives the same address, as it
-    would for a real account. Its domain is copied from a real user's email (chosen by the same key), so the mix of
-    domains matches the real accounts. A made-up address that was always at one fixed domain would give away every
-    real account whose email is anywhere else. With no users at all it falls back to example.com.
-    """
-    digest = security.keyed_digest("made-up-email", username)
-    domain = "example.com"
-    live = User.deleted_at.is_(None)
-    count = db.scalar(select(func.count()).select_from(User).where(live)) or 0
-    if count:
-        pick = int.from_bytes(digest[16:20], "big") % count
-        real_email = db.scalar(select(User.email).where(live).order_by(User.username).offset(pick).limit(1))
-        domain = real_email.partition("@")[2] or domain
-    length = FAKE_LOCAL_LENGTHS[digest[20] % len(FAKE_LOCAL_LENGTHS)]
-    local = "".join(_FAKE_LOCAL_ALPHABET[byte % len(_FAKE_LOCAL_ALPHABET)] for byte in digest[:length])
-    return mask_email(f"{local}@{domain}")
-
-
 # --- limits -------------------------------------------------------------------------------------------
 
 

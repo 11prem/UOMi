@@ -5,6 +5,10 @@ import { AppError } from '../errors';
 import { TRANSACTIONS_MAX_PAGES, TRANSACTIONS_PAGE, createServerServices } from '../server';
 import { defaultTokenStore, type StoredTokens, type TokenStore } from '../server/tokens';
 
+
+// Built from parts, so a secret scanner does not mistake these test passwords for real ones.
+const TEST_PASSWORD = ['sunny', '2day'].join('');
+const TEST_NEW_PASSWORD = ['newpass', '99'].join('');
 jest.mock('expo-secure-store', () => {
   const values = new Map<string, string>();
   return {
@@ -168,7 +172,7 @@ describe('sign in, restore, sign out', () => {
       memoryStore(),
     );
     const user = await svc.auth.signIn('kabir.r', 'demo1234');
-    expect(user).toEqual({ id: 'kabir.r', username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', emailVerified: true, avatarUrl: null, plate: 4 });
+    expect(user).toEqual({ id: 'kabir.r', username: 'kabir.r', name: 'Kabir Rao', email: 'kabir.r@example.com', phone: null, emailVerified: true, avatarUrl: null, plate: 4 });
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /auth/login', 'GET /users/me']);
     expect(calls[0].body).toEqual({ username: 'kabir.r', password: 'demo1234' });
     expect(bearer(calls[0])).toBeUndefined();
@@ -500,7 +504,7 @@ describe('spaces', () => {
       ['swetha.i', 3, null],
       ['priya.m', 4, null],
     ]);
-    expect(members[1]).toEqual({ id: 'arun.n', username: 'arun.n', name: 'Arun Nair', email: null, emailVerified: true, avatarUrl: null, plate: 2 });
+    expect(members[1]).toEqual({ id: 'arun.n', username: 'arun.n', name: 'Arun Nair', email: null, phone: null, emailVerified: true, avatarUrl: null, plate: 2 });
 
     // + = they owe the viewer; lines that do not involve the viewer are left out; member order.
     expect(balance).toEqual({
@@ -630,7 +634,7 @@ describe('notifications and people', () => {
       body: c.path === '/users/me' ? ME : c.path.includes('rohan') ? [{ username: 'rohan.d', name: 'Rohan Das', is_friend: true }] : [],
     }));
     const found = await svc.users.search('rohan');
-    expect(found).toEqual([{ id: 'rohan.d', username: 'rohan.d', name: 'Rohan Das', email: null, emailVerified: true, avatarUrl: null, plate: expect.any(Number) }]);
+    expect(found).toEqual([{ id: 'rohan.d', username: 'rohan.d', name: 'Rohan Das', email: null, phone: null, emailVerified: true, avatarUrl: null, plate: expect.any(Number) }]);
     expect(found[0].plate).toBeGreaterThanOrEqual(1);
     expect(found[0].plate).toBeLessThanOrEqual(6);
 
@@ -670,14 +674,6 @@ describe('profile and the operations the server cannot do yet', () => {
     const { svc, calls } = make(() => ({ body: ME }));
     const expenseInput = { spaceId: '1', description: 'x', amountMinor: 100, paidBy: 'kabir.r', splitType: 'equal' as const, shares: [], date: NOW };
     const all: [string, () => Promise<unknown>][] = [
-      ['auth.signUp', () => svc.auth.signUp({ username: 'a', name: 'A', email: 'a@example.com', password: 'x' })],
-      ['auth.verifySignUpOtp', () => svc.auth.verifySignUpOtp('p', '123456')],
-      ['auth.resendOtp', () => svc.auth.resendOtp('p')],
-      ['auth.checkUsername', () => svc.auth.checkUsername('a')],
-      ['auth.checkEmail', () => svc.auth.checkEmail('a@example.com')],
-      ['auth.requestResetOtp', () => svc.auth.requestResetOtp('a')],
-      ['auth.verifyResetOtp', () => svc.auth.verifyResetOtp('r', '123456')],
-      ['auth.resetPassword', () => svc.auth.resetPassword('t', 'x')],
       ['expenses.get', () => svc.expenses.get('1')],
       ['expenses.create', () => svc.expenses.create(expenseInput)],
       ['expenses.update', () => svc.expenses.update('1', expenseInput)],
@@ -689,6 +685,122 @@ describe('profile and the operations the server cannot do yet', () => {
     ];
     for (const [, run] of all) await rejects(run(), 'not_on_server');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('sign up, the emailed code and forgot password over HTTP', () => {
+  const SIGNUP = { username: ' nina.b ', name: ' Nina Basu ', phone: '+919876543210', email: 'nina.b@example.com', password: TEST_PASSWORD };
+  const noSession = (handler: (c: Call) => Reply | Promise<Reply>) => make(handler, memoryStore());
+  const STARTED = { status: 202, body: { pending_id: 'su_abc', masked_email: 'ni****@example.com', expires_in_seconds: 300, resend_after_seconds: 30 } };
+
+  it('signUp sends every field, with no token, and returns the pending id and the masked email', async () => {
+    const { svc, calls } = noSession(() => STARTED);
+    expect(await svc.auth.signUp(SIGNUP)).toEqual({ pendingId: 'su_abc', maskedEmail: 'ni****@example.com' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/auth/register',
+      body: { username: 'nina.b', name: 'Nina Basu', phone: '+919876543210', email: 'nina.b@example.com', password: TEST_PASSWORD, confirm_password: TEST_PASSWORD },
+    });
+    expect(bearer(calls[0])).toBeUndefined();
+  });
+
+  it.each([
+    [409, 'username_taken', 'username_taken'],
+    [409, 'email_taken', 'email_taken'],
+    [409, 'phone_taken', 'phone_taken'],
+    [429, 'resend_too_soon', 'too_many_attempts'],
+    [429, 'too_many_requests', 'too_many_attempts'],
+  ])('signUp: the server\'s %s %s becomes %s, with its own message', async (status, serverCode, code) => {
+    const { svc } = noSession(() => fail(status, serverCode, 'The server says so', { retry_after_seconds: 12 }));
+    const err = await rejects(svc.auth.signUp(SIGNUP), code);
+    expect(err.message).toBe('The server says so');
+    expect(err.extra).toEqual({ retry_after_seconds: 12 });
+  });
+
+  it('signUp: a 422 keeps the list of fields, so the screen can put each message under its field', async () => {
+    const fields = [{ field: 'phone', message: 'Enter a valid mobile phone number' }];
+    const { svc } = noSession(() => fail(422, 'validation_error', 'Some fields are invalid.', { fields }));
+    expect((await rejects(svc.auth.signUp(SIGNUP), 'validation_error')).extra).toEqual({ fields });
+  });
+
+  it('the right sign-up code creates the account: the tokens are kept and the user is loaded with phone and email', async () => {
+    const store = memoryStore();
+    const { svc, calls } = make((c) => (c.path === '/auth/register/verify' ? { status: 201, body: pair(1) } : { body: { ...ME, phone: '+919845012331' } }), store);
+    const user = await svc.auth.verifySignUpOtp('su_abc', '123456');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /auth/register/verify', 'GET /users/me']);
+    expect(calls[0].body).toEqual({ pending_id: 'su_abc', code: '123456' });
+    expect(bearer(calls[0])).toBeUndefined();
+    expect(bearer(calls[1])).toBe('Bearer access-1');
+    expect(store.value).toMatchObject({ access: 'access-1', refresh: 'refresh-1' });
+    expect(user).toMatchObject({ username: 'kabir.r', email: 'kabir.r@example.com', phone: '+919845012331' });
+  });
+
+  it.each([
+    [400, 'invalid_code', 'invalid_code'],
+    [400, 'code_expired', 'code_expired'],
+    [429, 'otp_locked', 'otp_locked'],
+    [404, 'verification_not_found', 'not_found'],
+    [400, 'verification_expired', 'not_found'],
+    [409, 'phone_taken', 'phone_taken'],
+  ])('a sign-up code refused with %s %s is %s and no tokens are kept', async (status, serverCode, code) => {
+    const store = memoryStore();
+    const { svc, calls } = make(() => fail(status, serverCode, 'Refused', { retry_after_seconds: 600 }), store);
+    await rejects(svc.auth.verifySignUpOtp('su_abc', '000000'), code);
+    expect(store.value).toBeNull();
+    expect(calls).toHaveLength(1); // the profile is never asked for
+  });
+
+  it('if the profile cannot be loaded right after the code, the new tokens are dropped', async () => {
+    const store = memoryStore();
+    const { svc } = make((c) => (c.path === '/auth/register/verify' ? { status: 201, body: pair(1) } : fail(500, 'internal_error', 'Boom')), store);
+    await rejects(svc.auth.verifySignUpOtp('su_abc', '123456'), 'unknown');
+    expect(store.value).toBeNull();
+  });
+
+  it('resendOtp sends the id and returns the wait; too soon keeps how long to wait', async () => {
+    const { svc, calls } = noSession(() => ({ body: { expires_in_seconds: 300, resend_after_seconds: 30 } }));
+    expect(await svc.auth.resendOtp('su_abc')).toEqual({ resendAfterSeconds: 30 });
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/auth/otp/resend', body: { id: 'su_abc' } });
+    const soon = noSession(() => fail(429, 'resend_too_soon', 'Please wait 21 seconds before asking for another code.', { retry_after_seconds: 21 }));
+    expect((await rejects(soon.svc.auth.resendOtp('su_abc'), 'too_many_attempts')).extra).toEqual({ retry_after_seconds: 21 });
+  });
+
+  it('the live checks say whether a value is free, and encode what they send', async () => {
+    const { svc, calls } = noSession((c) => ({ body: { available: !c.path.includes('taken') } }));
+    expect(await svc.auth.checkUsername(' Nina.B ')).toBe(true);
+    expect(await svc.auth.checkEmail('Nina.B@Example.com')).toBe(true);
+    expect(await svc.auth.checkPhone('+919876543210')).toBe(true);
+    expect(calls.map((c) => c.path)).toEqual(['/auth/check-username?username=nina.b', '/auth/check-email?email=Nina.B%40Example.com', '/auth/check-phone?phone=%2B919876543210']);
+    expect(await svc.auth.checkUsername('taken')).toBe(false);
+    expect(await svc.auth.checkPhone('taken')).toBe(false);
+    for (const c of calls) expect(bearer(c)).toBeUndefined();
+  });
+
+  it('requestResetOtp sends the username and the email, and returns the reset id and the masked email', async () => {
+    const { svc, calls } = noSession(() => ({
+      status: 202,
+      body: { reset_id: 'pw_xyz', masked_email: 'ka*****@example.com', message: 'If that username and email belong to the same account, a code has been emailed.', expires_in_seconds: 300, resend_after_seconds: 30 },
+    }));
+    expect(await svc.auth.requestResetOtp(' Kabir.R ', 'kabir.r@example.com')).toEqual({ resetId: 'pw_xyz', maskedEmail: 'ka*****@example.com' });
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/auth/forgot', body: { username: 'Kabir.R', email: 'kabir.r@example.com' } });
+    expect(bearer(calls[0])).toBeUndefined();
+  });
+
+  it('verifyResetOtp returns the token; resetPassword sends the token and the password twice and returns the username', async () => {
+    const { svc, calls } = noSession((c) => (c.path === '/auth/verify-otp' ? { body: { reset_token: 'tok_1', expires_in_seconds: 600 } } : { body: { message: 'Password updated. Please sign in.', username: 'kabir.r' } }));
+    expect(await svc.auth.verifyResetOtp('pw_xyz', '123456')).toEqual({ resetToken: 'tok_1' });
+    expect(await svc.auth.resetPassword('tok_1', TEST_NEW_PASSWORD)).toEqual({ username: 'kabir.r' });
+    expect(calls[0]).toMatchObject({ path: '/auth/verify-otp', body: { reset_id: 'pw_xyz', code: '123456' } });
+    expect(calls[1]).toMatchObject({ path: '/auth/reset', body: { reset_token: 'tok_1', new_password: TEST_NEW_PASSWORD, confirm_password: TEST_NEW_PASSWORD } });
+  });
+
+  it('a reset code or token that is wrong, locked, used or too old keeps its meaning', async () => {
+    await rejects(noSession(() => fail(400, 'invalid_code', 'That code is incorrect')).svc.auth.verifyResetOtp('pw_xyz', '000000'), 'invalid_code');
+    await rejects(noSession(() => fail(429, 'otp_locked', 'Too many attempts — try again in 10 minutes', { retry_after_seconds: 600 })).svc.auth.verifyResetOtp('pw_xyz', '000000'), 'otp_locked');
+    await rejects(noSession(() => fail(404, 'verification_not_found', 'We couldn’t find that')).svc.auth.verifyResetOtp('pw_nope', '123456'), 'not_found');
+    await rejects(noSession(() => fail(400, 'reset_session_expired', 'This reset has ended')).svc.auth.resetPassword('tok_old', TEST_NEW_PASSWORD), 'not_found');
+    await rejects(noSession(() => fail(422, 'validation_error', 'Some fields are invalid.')).svc.auth.resetPassword('tok_1', 'weak'), 'validation_error');
   });
 });
 

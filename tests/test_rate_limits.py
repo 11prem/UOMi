@@ -171,7 +171,7 @@ def test_search_is_limited_per_address(client, monkeypatch):
 
 
 def forgot(client, username):
-    return client.post("/auth/forgot", json={"username": username})
+    return client.post("/auth/forgot", json={"username": username, "email": f"{username}@example.com"})
 
 
 def test_forgot_is_limited_per_address_across_usernames(client, email_outbox, monkeypatch):

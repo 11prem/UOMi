@@ -73,6 +73,7 @@ def build_export(db: Session, user: User) -> AccountExport:
         profile=ExportProfile(
             username=user.username,
             name=user.name,
+            phone=user.phone,
             email=user.email,
             currency=user.currency,
             notifications_on=user.notifications_on,

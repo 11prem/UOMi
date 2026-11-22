@@ -16,8 +16,8 @@ The UOMi phone app, built with React Native and Expo (SDK 58, React Native 0.88,
 Rules that only apply in server mode:
 
 - **Endpoints that exist work:** sign in and out, Home, Create Space, people search, the Space page and Notifications use the real backend.
-- **Endpoints that don't exist yet show a panel:** Create Account, Forgot password, expenses, settle up, transactions, profile editing and space settings show **"Not available on this server yet"**. See `../BACKEND-DEVIATIONS.md`.
-- **Email, not phone numbers:** sign-up and forgot password use an email address (demo mode: the code is always `123456`, and a changed password works offline). People are found by username only.
+- **Endpoints that don't exist yet show a panel:** Expenses, settle up, transactions, profile editing and space settings show **"Not available on this server yet"**. See `../BACKEND-DEVIATIONS.md`.
+- **Phone and email:** sign-up collects both. The code goes to the **email only** (the phone is checked and kept unique, and never gets a text), and forgot password asks for the username and the email on the account (demo mode: the code is always `123456`, and a changed password works offline). Sign-in is username and password. In server mode the add-people search forwards what is typed, so a complete phone number finds a person as well as a username; demo mode searches usernames only.
 - **Idle sign-out:** the app returns to Sign In after about 29.5 idle minutes: the server's limit (30 minutes) minus a 30-second margin. It follows whatever the server says (`idle_timeout_seconds`). Demo mode stays signed in.
 - **Switching modes signs you out** and clears cached data, so the two modes never mix.
 

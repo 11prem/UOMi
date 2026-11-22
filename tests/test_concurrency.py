@@ -30,7 +30,7 @@ from app.schemas.group import AddMembersRequest
 from app.schemas.settlement import SettlementCreate
 from app.schemas.user import RegisterRequest
 from app.services import auth_service, expense_service, group_service, settlement_service
-from tests.helpers import register_payload
+from tests.helpers import phone_for, register_payload
 
 EMAILS = {"alice": "alice@example.com", "bob": "bob@example.com", "carol": "bobby@example.com"}
 
@@ -136,7 +136,7 @@ def test_a_burst_obeys_the_hourly_limit_even_without_the_cooldown(engine, monkey
 def test_a_burst_of_forgot_password_requests_for_one_username_is_limited_too(engine, monkeypatch):
     monkeypatch.setattr(settings, "OTP_RESEND_COOLDOWN_SECONDS", 0)
     seed(engine)
-    results = run_each(engine, [lambda db: auth_service.request_password_reset(db, "alice", BackgroundTasks()) for _ in range(10)])
+    results = run_each(engine, [lambda db: auth_service.request_password_reset(db, "alice", "alice@example.com", BackgroundTasks()) for _ in range(10)])
 
     passed = [r for r in results if r[0] == "ok"]
     assert 1 <= len(passed) <= settings.OTP_MAX_REQUESTS_PER_HOUR  # old code: all 10
@@ -145,7 +145,7 @@ def test_a_burst_of_forgot_password_requests_for_one_username_is_limited_too(eng
 
 def test_a_burst_of_made_up_usernames_is_limited_exactly_like_a_real_one(engine, monkeypatch):
     monkeypatch.setattr(settings, "OTP_RESEND_COOLDOWN_SECONDS", 0)
-    results = run_each(engine, [lambda db: auth_service.request_password_reset(db, "nobody.here", BackgroundTasks()) for _ in range(10)])
+    results = run_each(engine, [lambda db: auth_service.request_password_reset(db, "nobody.here", "nobody.here@example.com", BackgroundTasks()) for _ in range(10)])
 
     passed = [r for r in results if r[0] == "ok"]
     assert 1 <= len(passed) <= settings.OTP_MAX_REQUESTS_PER_HOUR
@@ -174,7 +174,7 @@ def test_the_daily_cap_still_counts_a_sign_up_after_it_is_verified(engine, monke
             tasks = BackgroundTasks()
             try:
                 started = auth_service.start_signup(
-                    db, RegisterRequest(**register_payload(username=f"user{n:02d}", email=email)), tasks
+                    db, RegisterRequest(**register_payload(username=f"user{n:02d}", email=email, phone=phone_for(f"user{n:02d}"))), tasks
                 )
             except HTTPException as refused:
                 assert refused.detail["code"] == "too_many_requests"

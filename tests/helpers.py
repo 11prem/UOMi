@@ -1,6 +1,7 @@
 """Small helpers shared by the tests."""
 
 import re
+import zlib
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -18,12 +19,30 @@ from app.utils.validators import normalize_email
 PASSWORD = "password123"
 STAND_IN = "stand.in"  # see create_space
 EMAILS = {name: f"{name}@example.com" for name in ("alice", "bob", "bobby", "carol", "alex")}
+PHONES = {
+    "alice": "9876543210",
+    "bob": "9876543211",
+    "bobby": "9876543212",
+    "carol": "9876543213",
+    "alex": "9876543214",
+}
+
+
+def email_for(username: str) -> str:
+    """The test email of a user: the fixed one for the five usual names, <username>@example.com for anyone else."""
+    return EMAILS.get(username) or f"{username}@example.com"
+
+
+def phone_for(username: str) -> str:
+    """A valid, distinct mobile number for a user: the fixed one for the five usual names, a stable made-up one for anyone else."""
+    return PHONES.get(username) or f"98{zlib.crc32(username.encode()) % 10**8:08d}"
 
 
 def register_payload(**overrides) -> dict:
     payload = {
         "username": "alice",
         "name": "Alice",
+        "phone": PHONES["alice"],
         "email": EMAILS["alice"],
         "password": PASSWORD,
         "confirm_password": PASSWORD,
@@ -65,20 +84,24 @@ def wrong_code(real: str) -> str:
     return "000000" if real != "000000" else "111111"
 
 
-def start_signup(client, username: str, email: str | None = None, **overrides):
+def start_signup(client, username: str, email: str | None = None, phone: str | None = None, **overrides):
     """Create Account: the first step. Returns the response (202 with the pending id when it works)."""
     return client.post(
         "/auth/register",
         json=register_payload(
-            username=username, name=username.capitalize(), email=email or EMAILS[username], **overrides
+            username=username,
+            name=username.capitalize(),
+            email=email or email_for(username),
+            phone=phone or phone_for(username),
+            **overrides,
         ),
     )
 
 
-def register(client, username: str, email: str | None = None) -> dict:
+def register(client, username: str, email: str | None = None, phone: str | None = None) -> dict:
     """Sign a user up through the API, both steps (the emailed code is read from OUTBOX), and return the token pair."""
-    email = email or EMAILS[username]
-    started = start_signup(client, username, email)
+    email = email or email_for(username)
+    started = start_signup(client, username, email, phone)
     assert started.status_code == 202, started.text
     response = client.post(
         "/auth/register/verify", json={"pending_id": started.json()["pending_id"], "code": last_code(email)}
@@ -87,9 +110,10 @@ def register(client, username: str, email: str | None = None) -> dict:
     return response.json()
 
 
-def start_reset(client, username: str):
-    """Forgot Password, step a. Returns the response (202 with the reset id and masked email)."""
-    return client.post("/auth/forgot", json={"username": username})
+def start_reset(client, username: str, email: str | None = None):
+    """Forgot Password, step a: the username and the email on the account. Returns the response (202 with the reset id
+    and masked email)."""
+    return client.post("/auth/forgot", json={"username": username, "email": email or email_for(username)})
 
 
 def reset_token(client, username: str) -> str:
@@ -97,7 +121,7 @@ def reset_token(client, username: str) -> str:
     started = start_reset(client, username)
     assert started.status_code == 202, started.text
     verified = client.post(
-        "/auth/verify-otp", json={"reset_id": started.json()["reset_id"], "code": last_code(EMAILS[username])}
+        "/auth/verify-otp", json={"reset_id": started.json()["reset_id"], "code": last_code(email_for(username))}
     )
     assert verified.status_code == 200, verified.text
     return verified.json()["reset_token"]

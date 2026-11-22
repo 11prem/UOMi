@@ -26,6 +26,7 @@ class PendingSignup(Base):
     username: Mapped[str] = mapped_column(String(30), index=True)
     name: Mapped[str] = mapped_column(String(100))
     email: Mapped[str] = mapped_column(String(254), index=True)  # lowercase
+    phone: Mapped[str] = mapped_column(String(20))  # E.164, kept here until the emailed code is accepted
     password_hash: Mapped[str] = mapped_column(String(255))
     code_hash: Mapped[str] = mapped_column(String(64))  # HMAC-SHA256, never the code itself
     attempts: Mapped[int] = mapped_column(default=0)  # wrong guesses at the current code

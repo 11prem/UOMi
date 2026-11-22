@@ -161,4 +161,5 @@ resend_limit = limit_by_ip("resend", lambda: settings.RESEND_MAX_PER_IP_PER_HOUR
 verify_otp_limit = limit_by_ip("verify-otp", lambda: settings.VERIFY_OTP_MAX_PER_IP_PER_HOUR, HOUR)
 username_check_limit = limit_by_ip("username-check", lambda: settings.USERNAME_CHECK_MAX_PER_IP_PER_MINUTE, MINUTE)
 email_check_limit = limit_by_ip("email-check", lambda: settings.EMAIL_CHECK_MAX_PER_IP_PER_HOUR, HOUR)
+phone_check_limit = limit_by_ip("phone-check", lambda: settings.PHONE_CHECK_MAX_PER_IP_PER_HOUR, HOUR)
 search_ip_limit = limit_by_ip("search", lambda: settings.SEARCH_MAX_PER_IP_PER_MINUTE, MINUTE)

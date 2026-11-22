@@ -9,22 +9,23 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.database import SessionLocal, utcnow
 from app.models.password_reset import PasswordReset
-from tests.helpers import PASSWORD, EMAILS, auth, db_exec, error_code, last_code, register, rewind
+from tests.helpers import PASSWORD, EMAILS, auth, db_exec, email_for, error_code, last_code, register, rewind
 
 EMAIL = EMAILS["alice"]
 NEW_PASSWORD = "brand-new-password-1"
 MASK = re.compile(r"[a-z0-9]{2}\*+@[a-z.]+")  # the shape of a masked email: "al***@example.com"
 
 
-def forgot(client, username="alice"):
-    return client.post("/auth/forgot", json={"username": username})
+def forgot(client, username="alice", email=None):
+    """Forgot Password, step a: the username and the email on the account (the right one unless told otherwise)."""
+    return client.post("/auth/forgot", json={"username": username, "email": email or email_for(username)})
 
 
 def request_code(client, username="alice") -> tuple[str, str]:
     """Ask for a code. Returns the reset id and the code, read out of the email the app 'sent'."""
     response = forgot(client, username)
     assert response.status_code == 202, response.text
-    return response.json()["reset_id"], last_code(EMAILS[username])
+    return response.json()["reset_id"], last_code(email_for(username))
 
 
 def verify(client, reset_id, code):
@@ -106,38 +107,49 @@ def test_an_unknown_username_gets_the_same_kind_of_reply_and_no_email(client, al
     assert len(email_outbox) == 1  # only alice's address was emailed
 
 
-def test_the_made_up_email_for_an_unknown_username_is_always_the_same(client, alice):
-    first = forgot(client, "nobody.here").json()["masked_email"]
+def test_the_right_username_with_another_email_gets_the_same_reply_and_no_email(client, alice, email_outbox):
+    known = forgot(client, "alice")
     age_requests(PAST_COOLDOWN)
-    second = forgot(client, "nobody.here").json()["masked_email"]
-    other = forgot(client, "someone.else").json()["masked_email"]
+    email_outbox.clear()
 
-    assert first == second  # a different address each time would give it away
-    assert other != first
+    wrong = forgot(client, "alice", "someone.else@example.com")
 
-
-def test_made_up_emails_follow_the_domains_of_the_real_accounts(client, alice):
-    # If every made-up address were at one domain, any other domain in a reply would prove the username exists.
-    register(client, "dave", email="dave@mail.test")
-    from app.services import otp_service
-
-    with SessionLocal() as session:
-        shown = [otp_service.fake_masked_email(session, f"ghost{i}") for i in range(60)]
-
-    assert {email.partition("@")[2] for email in shown} == {"example.com", "mail.test"}  # both real domains, and no other
-    for email in shown:
-        assert MASK.fullmatch(email) and email.index("@") >= 5, email  # the same shape as real ones: 2 letters, 3 or more stars
+    assert wrong.status_code == known.status_code == 202
+    assert set(wrong.json()) == set(known.json())
+    for field in ("message", "expires_in_seconds", "resend_after_seconds"):
+        assert wrong.json()[field] == known.json()[field]
+    assert email_outbox == []  # not to alice's address, and not to the one that was typed either
+    assert verify(client, wrong.json()["reset_id"], "123456").status_code == 400  # and no code can ever work for it
 
 
-def test_the_made_up_email_falls_back_to_example_com_when_nobody_has_signed_up(client):
-    from app.services import otp_service
+def test_another_persons_email_with_the_right_username_gets_no_email_either(client, alice, email_outbox):
+    register(client, "bob")
+    email_outbox.clear()
 
-    with SessionLocal() as session:
-        assert otp_service.fake_masked_email(session, "ghost").endswith("@example.com")
+    wrong = forgot(client, "alice", EMAILS["bob"])
+
+    assert wrong.status_code == 202 and email_outbox == []  # bob's own address is not mailed because someone typed it
+
+
+def test_the_masked_email_in_every_reply_is_the_one_that_was_typed(client, alice):
+    """So the reply never differs between a matching pair and any other: it only ever echoes what was sent."""
+    matching = forgot(client, "alice").json()["masked_email"]
+    age_requests(PAST_COOLDOWN)
+    other_email = forgot(client, "alice", "zoe.long.name@example.org").json()["masked_email"]
+    unknown = forgot(client, "nobody.here", "ka.rao@example.com").json()["masked_email"]
+
+    assert matching == "al***@example.com"
+    assert other_email == "zo***********@example.org"  # 13 letters before the @: two shown, eleven hidden
+    assert unknown == "ka****@example.com"
+
+
+def test_the_email_can_be_typed_in_any_case_with_spaces(client, alice, email_outbox):
+    assert forgot(client, "alice", "  ALICE@Example.COM ").status_code == 202
+    assert [to for to, _ in email_outbox] == ["alice@example.com"]  # it matched, so the code went out
 
 
 def test_the_username_can_be_typed_in_any_case_with_spaces(client, alice, email_outbox):
-    assert forgot(client, "  ALICE ").status_code == 202
+    assert forgot(client, "  ALICE ", EMAILS["alice"]).status_code == 202
     assert len(email_outbox) == 1
 
 
@@ -149,8 +161,11 @@ def test_the_code_is_not_stored_in_plain_text(client, alice):
     assert len(row.code_hash) == 64  # an HMAC-SHA256, not the code
 
 
-def test_forgot_password_takes_a_username_not_an_email_address(client, alice):
+def test_forgot_password_needs_both_the_username_and_the_email(client, alice):
     assert client.post("/auth/forgot", json={"email": EMAIL}).status_code == 422
+    assert client.post("/auth/forgot", json={"username": "alice"}).status_code == 422
+    bad = client.post("/auth/forgot", json={"username": "alice", "email": "not-an-email"})
+    assert bad.status_code == 422 and [f["field"] for f in bad.json()["detail"]["fields"]] == ["email"]
 
 
 # --- Limits on asking for codes ---------------------------------------------

@@ -1,3 +1,4 @@
+import { prettyPhone } from '../../src/domain/phone';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
@@ -61,6 +62,7 @@ export default function Profile() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[type.title, { color: colors.ink }]}>{me.name}</Text>
             {!!me.email && <Text style={[type.body, { color: colors.ink2, marginTop: space.s1 / 2 }]}>{me.email}</Text>}
+            {!!me.phone && <Text style={[type.body, { color: colors.ink2, marginTop: space.s1 / 2 }]}>{prettyPhone(me.phone)}</Text>}
             <Text style={[type.label, { color: colors.ink2 }]}>{`@${me.username}`}</Text>
           </View>
           <IconButton icon="pencil" label="Edit profile" disabled={server} onPress={() => router.push('/profile-edit')} />

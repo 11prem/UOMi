@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.group_member import SpaceMember
 from app.models.user import User
 from app.schemas.user import UserSearchResult, UserUpdate
+from app.utils.validators import parse_full_phone
 def update_me(db: Session, user: User, data: UserUpdate) -> User:
     """Edit the signed-in person's own name and preferences. Their username and email never change."""
     if data.name is not None:
@@ -24,13 +25,15 @@ MIN_LETTERS_FOR_EVERYONE = 3
 
 
 def search_users(db: Session, me: str, query: str) -> list[UserSearchResult]:
-    """Search by username, at most SEARCH_LIMIT rows.
+    """Search by username or phone number, at most SEARCH_LIMIT rows.
 
     * Friends (people who share a space with you) match from the first letter and come first.
     * Everyone else matches by username prefix, from MIN_LETTERS_FOR_EVERYONE letters.
-    * You never appear in your own results, and email addresses are never returned.
+    * A phone number only matches when the whole number has been typed.
+    * You never appear in your own results, and phone numbers and email addresses are never returned.
     """
-    q = query.strip().lower()
+    text = query.strip()
+    q = text.lower()
     if not q:
         return []
 
@@ -52,4 +55,14 @@ def search_users(db: Session, me: str, query: str) -> list[UserSearchResult]:
         UserSearchResult(username=user.username, name=user.name, is_friend=bool(friend))
         for user, friend in rows
     ]
-    return results
+
+    phone = parse_full_phone(text)
+    if phone is not None:
+        match = db.scalar(select(User).where(User.phone == phone, User.username != me, User.deleted_at.is_(None)))
+        if match is not None and all(r.username != match.username for r in results):
+            friend_usernames = set(db.scalars(friends))
+            results.insert(
+                0,
+                UserSearchResult(username=match.username, name=match.name, is_friend=match.username in friend_usernames),
+            )
+    return results[:SEARCH_LIMIT]
