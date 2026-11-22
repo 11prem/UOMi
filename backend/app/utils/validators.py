@@ -1,11 +1,17 @@
 """Input validators shared by the schemas. They raise ValueError, which Pydantic reports as a 422."""
 
 import re
+from functools import lru_cache
+
+import phonenumbers
+
+from app.config import settings
 
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_BYTES = 72  # bcrypt cannot handle more than this
 MAX_EMAIL = 254  # RFC 5321
 MAX_EMAIL_LOCAL = 64
+MIN_FULL_PHONE_DIGITS = 10  # fewer digits than this is treated as a half-typed number in search
 MAX_ID = 2**31 - 1  # the largest id a path/query parameter may carry; anything bigger overflows the database
 MAX_NEW_USERNAME = 20  # specs § 4.2: a NEW account's username is 3-20 characters
 MAX_KNOWN_USERNAME = 30  # older accounts may have up to 30: people with one must stay findable and able to sign in
@@ -16,11 +22,9 @@ _NEW_USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,20}$")
 _KNOWN_USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,30}$")
 _EMAIL_LOCAL_RE = re.compile(r"^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$")  # printable ASCII, no spaces, no '@'
 _EMAIL_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")  # one part of the domain
-
-_PHONE_CHARS_RE = re.compile(r"^\+?[0-9]+$")
-MIN_PHONE_DIGITS = 8
-MAX_PHONE_DIGITS = 15  # E.164
-DEFAULT_COUNTRY_CODE = "91"  # a 10-digit national number is read as an Indian one (INR first, specs § 1)
+_PHONE_CHARS_RE = re.compile(r"^[+0-9\s\-().]+$")  # what a search box may hold for a phone number
+_PHONE_PUNCTUATION_RE = re.compile(r"[\s\-().]")  # dropped before a number is read
+_PHONE_DIGITS_RE = re.compile(r"\+?[0-9]+")
 
 PASSWORD_RULE = "Use at least 8 characters with a letter and a number"
 
@@ -85,26 +89,6 @@ def normalize_email(email: str) -> str:
     return email
 
 
-def normalize_phone(phone: str) -> str:
-    """The phone number as E.164 (`+919876543210`), or raise if it cannot be one.
-
-    Spaces, dashes, dots and brackets are ignored. ASCII digits only (look-alike digits of other scripts are refused),
-    8 to 15 digits. A number with no leading '+' and exactly 10 digits is taken as an Indian number (+91). It is a
-    format check, not a guarantee that the number exists.
-    """
-    cleaned = re.sub(r"[ \-.()]", "", phone.strip())
-    if cleaned.startswith("00"):
-        cleaned = "+" + cleaned[2:]
-    if not phone.isascii() or not _PHONE_CHARS_RE.fullmatch(cleaned):
-        raise ValueError("Enter a valid phone number")
-    digits = cleaned.lstrip("+")
-    if not cleaned.startswith("+") and len(digits) == 10:
-        digits = DEFAULT_COUNTRY_CODE + digits
-    if not MIN_PHONE_DIGITS <= len(digits) <= MAX_PHONE_DIGITS or digits.startswith("0"):
-        raise ValueError("Enter a valid phone number")
-    return "+" + digits
-
-
 def mask_email(email: str) -> str:
     """`kabir.r@example.com` -> `ka*****@example.com`: the first two letters of the part before '@' stay visible.
 
@@ -113,6 +97,56 @@ def mask_email(email: str) -> str:
     local, _, domain = email.partition("@")
     kept = min(2, len(local) - 1)
     return f"{local[:kept]}{'*' * (len(local) - kept)}@{domain}"
+
+
+@lru_cache
+def _default_region() -> str:
+    """The country a number typed without a country code belongs to (DEFAULT_COUNTRY_CODE, +91 means IN)."""
+    region = phonenumbers.region_code_for_country_code(int(settings.DEFAULT_COUNTRY_CODE.lstrip("+")))
+    if region in (None, "ZZ"):
+        raise RuntimeError(f"DEFAULT_COUNTRY_CODE {settings.DEFAULT_COUNTRY_CODE!r} is not a real calling code")
+    return region
+
+
+def normalize_phone(phone: str) -> str:
+    """Return the number in E.164 form (+919876543210), or raise if it is not a real mobile number.
+
+    Only ASCII digits, spaces, dashes, dots and brackets are accepted, with an optional leading '+' (or '00').
+    A number without a country code is read as a national number of DEFAULT_COUNTRY_CODE's country. It is then
+    checked with libphonenumber (the same library family as the app): it must be a valid number for its country
+    and a MOBILE line, because it is a person's own phone. A landline is refused where libphonenumber can tell it
+    from a mobile; in the US and Canada it cannot (they share ranges), so a landline there is accepted.
+    """
+    cleaned = _PHONE_PUNCTUATION_RE.sub("", phone)
+    if not _PHONE_DIGITS_RE.fullmatch(cleaned):  # ASCII digits only, a '+' only first: no look-alike digits, no letters
+        raise ValueError("Enter a valid phone number")
+    if cleaned.startswith("00"):
+        cleaned = "+" + cleaned[2:]
+    try:
+        number = phonenumbers.parse(cleaned, _default_region())
+    except phonenumbers.NumberParseException:
+        raise ValueError("Enter a valid phone number") from None
+    mobile = (phonenumbers.PhoneNumberType.MOBILE, phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE)
+    if not phonenumbers.is_valid_number(number) or phonenumbers.number_type(number) not in mobile:
+        raise ValueError("Enter a valid mobile phone number")
+    return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+
+
+def parse_full_phone(text: str) -> str | None:
+    """For people search: return the E.164 number if `text` is a complete phone number, else None.
+
+    "Complete" means it only holds phone characters and at least MIN_FULL_PHONE_DIGITS digits,
+    so a half-typed number never matches anyone.
+    """
+    text = text.strip()
+    if not _PHONE_CHARS_RE.fullmatch(text):
+        return None
+    if len(re.sub(r"[^0-9]", "", text)) < MIN_FULL_PHONE_DIGITS:
+        return None
+    try:
+        return normalize_phone(text)
+    except ValueError:
+        return None
 
 
 def validate_password_strength(password: str) -> str:

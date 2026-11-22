@@ -14,16 +14,11 @@ from app.services.reminder_scheduler import start_scheduler, stop_scheduler
 from app.utils.errors import http_error_handler, unhandled_error_handler, validation_error_handler
 from app.utils.log_redaction import install_access_log_redaction
 from app.utils.middleware import SafeErrorsMiddleware, SecurityHeadersMiddleware
-from app import database
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Every table is created when the server starts, if it is missing (it never changes a table that already exists).
-    # Alembic (`migrations/`) is for changing a live database: do not run `alembic upgrade head` on a database that
-    # `create_all` already filled, or it fails with "table already exists".
-    database.Base.metadata.create_all(bind=database.engine)
-    if settings.REMINDERS_ENABLED or settings.RETENTION_ENABLED:
+    if settings.REMINDERS_ENABLED or settings.RETENTION_ENABLED or settings.PUSH_ENABLED:
         start_scheduler()
     yield
     stop_scheduler()

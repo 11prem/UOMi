@@ -65,9 +65,6 @@ class Settings(BaseSettings):
 
     # --- Emailed codes: sign-up verification and forgot password (specs § 3.4) ---
     OTP_LENGTH: int = 6
-    # Development only: when set (for example 123456), EVERY emailed code is this one, so it can be typed without opening the
-    # email, and the app does not show it anywhere. Empty (the default) means a random code each time. Production refuses it.
-    OTP_FIXED_CODE: str = ""
     OTP_TTL_MINUTES: int = 5  # how long an emailed code stays valid
     OTP_MAX_ATTEMPTS: int = 5  # wrong guesses before the sign-up or reset is locked
     OTP_LOCK_MINUTES: int = 10  # how long the lock after OTP_MAX_ATTEMPTS wrong codes lasts
@@ -86,8 +83,10 @@ class Settings(BaseSettings):
     # so it is kept much tighter than the username check.
     USERNAME_CHECK_MAX_PER_IP_PER_MINUTE: int = Field(default=60, ge=1)
     EMAIL_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)
+    PHONE_CHECK_MAX_PER_IP_PER_HOUR: int = Field(default=30, ge=1)  # the phone check, too, tells anyone whether a number has an account
     SEARCH_MAX_PER_USER_PER_MINUTE: int = Field(default=120, ge=1)
     SEARCH_MAX_PER_IP_PER_MINUTE: int = Field(default=240, ge=1)
+    PHONE_LOOKUPS_PER_USER_PER_HOUR: int = Field(default=20, ge=1)  # searches by a complete phone number
     # Most codes (emails) the whole API will create per UTC day, for every address together. A last-resort
     # brake on the email bill: also set a sending limit at the email provider. Trade-off: whoever uses the whole cap
     # up blocks password resets for everyone until UTC midnight, so size it well above real daily use.
@@ -98,6 +97,7 @@ class Settings(BaseSettings):
     TRUSTED_PROXY_COUNT: int = Field(default=0, ge=0)
 
     # --- Defaults ---
+    DEFAULT_COUNTRY_CODE: str = "+91"  # a phone number typed without a country code is read as this country's
     DEFAULT_CURRENCY: str = "INR"
 
     # --- Email ---
@@ -115,24 +115,29 @@ class Settings(BaseSettings):
     REMINDERS_ENABLED: bool = True
 
     # --- Clean-up and export ---
-    # Runs the daily clean-up job inside the API process (the same scheduler as the reminders): it ends sessions that
-    # ran out, lifts old sign-in lockouts, deletes sign-ups that were never verified, and deletes old notifications.
+    # Runs the daily clean-up job inside the API process (the same scheduler as the reminders): it deletes sessions,
+    # sign-in attempts, sign-up and reset requests that have run out, and old notifications.
     RETENTION_ENABLED: bool = True
     NOTIFICATION_RETENTION_DAYS: int = Field(default=180, ge=1)  # a card older than this is deleted, unless it still asks something
     EXPORT_MAX_PER_USER_PER_HOUR: int = Field(default=5, ge=1)  # "export my data" is a heavy read
+
+    # --- Push notifications (task 1.8) ---
+    # Every card also becomes a push to the person's phones. The worker below sends them outside the request that made
+    # the card, so a slow or down push service never slows or fails the API.
+    PUSH_ENABLED: bool = True
+    PUSH_BACKEND: str = "console"  # "console" logs the push (development); "fcm" sends through Firebase (task 1.8.2)
+    FIREBASE_PROJECT_ID: str = ""  # for PUSH_BACKEND=fcm: the Firebase project from task 0.6
+    FIREBASE_CREDENTIALS_FILE: str = ""  # for PUSH_BACKEND=fcm: path to that project's service-account JSON file (a secret)
+    PUSH_SHOW_DETAILS: bool = True  # false: the lock screen says only "You have a new notification" (Appendix B, B.7)
+    PUSH_POLL_SECONDS: int = Field(default=5, ge=1)  # how often the worker looks for pushes that are due
+    PUSH_MAX_ATTEMPTS: int = Field(default=5, ge=1)  # tries before a push is given up on
+    DEVICE_TOKEN_RETENTION_DAYS: int = Field(default=60, ge=1)  # a phone not seen for this long is forgotten
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def split_origins(cls, value):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
-
-    @field_validator("OTP_FIXED_CODE")
-    @classmethod
-    def check_fixed_code(cls, value: str) -> str:
-        if value and not (value.isascii() and value.isdigit()):
-            raise ValueError("OTP_FIXED_CODE must be digits only, or empty")
         return value
 
     @field_validator("OTP_HMAC_KEY")
@@ -171,8 +176,15 @@ class Settings(BaseSettings):
             problems.append(f"EMAIL_BACKEND is {self.EMAIL_BACKEND!r}: it must be 'smtp' (or 'console' in development).")
         elif not (self.SMTP_HOST and self.SMTP_FROM):
             problems.append("EMAIL_BACKEND is 'smtp' but SMTP_HOST or SMTP_FROM is not set.")
-        if self.OTP_FIXED_CODE:
-            problems.append("OTP_FIXED_CODE is set: every code would be the same one. Remove it (it is for development only).")
+        if self.PUSH_ENABLED and self.PUSH_BACKEND == "console":
+            problems.append(
+                "PUSH_BACKEND is 'console', which only logs each push (with the card's text) to the server log. "
+                "Set a real push provider, or PUSH_ENABLED=false."
+            )
+        if self.PUSH_ENABLED and self.PUSH_BACKEND == "fcm" and not (self.FIREBASE_PROJECT_ID and self.FIREBASE_CREDENTIALS_FILE):
+            problems.append("PUSH_BACKEND is 'fcm' but FIREBASE_PROJECT_ID or FIREBASE_CREDENTIALS_FILE is not set.")
+        if self.PUSH_ENABLED and self.PUSH_BACKEND not in ("console", "fcm"):
+            problems.append(f"PUSH_BACKEND is {self.PUSH_BACKEND!r}: it must be 'fcm' (or 'console' in development).")
         weakness = _key_weakness(self.SECRET_KEY)
         if weakness:
             problems.append(f"SECRET_KEY {weakness}. Generate one: python -c \"import secrets; print(secrets.token_hex(32))\"")

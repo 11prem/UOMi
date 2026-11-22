@@ -21,29 +21,27 @@ from app.models.user import User
 from app.schemas.group import SpaceHeader
 from app.schemas.settlement import PayeeOut, SettlementCreate, SettlementDetailOut
 from app.services import balance_service, notification_service
-from app.services.space_access import active_ids, lock_space, member_space, person
 from app.services.space_access import first_name as _first_name
+from app.services.space_access import lock_space, member_space, person
 from app.utils.errors import api_error, field_error, forbidden
 
 
-def _payable(db: Session, space_id: int, user: User) -> dict[str, tuple[int, int]]:
-    """Everyone the person owes: their username -> (what is owed, the most that can be recorded paying them now)."""
+def _payable(db: Session, space_id: int, username: str) -> dict[str, tuple[int, int]]:
+    """Everyone `username` owes: their username -> (what is owed, the most that can be recorded paying them now)."""
     owing = {
         other: -amount
-        for other, amount in balance_service.viewer_pairs(db, space_id, user.username).items()
+        for other, amount in balance_service.viewer_pairs(db, space_id, username).items()
         if amount < 0
     }
     pending = dict(
         db.execute(
-            select(User.username, func.sum(Settlement.amount_minor))
-            .select_from(Settlement)
-            .join(User, User.id == Settlement.payee)
+            select(Settlement.payee, func.sum(Settlement.amount_minor))
             .where(
                 Settlement.space_id == space_id,
-                Settlement.payer == user.id,
+                Settlement.payer == username,
                 Settlement.status == SettlementStatus.PENDING,
             )
-            .group_by(User.username)
+            .group_by(Settlement.payee)
         ).all()
     )
     return {other: (owed, max(0, owed - pending.get(other, 0))) for other, owed in owing.items()}
@@ -51,31 +49,24 @@ def _payable(db: Session, space_id: int, user: User) -> dict[str, tuple[int, int
 
 def list_payees(db: Session, user: User, space_id: int) -> list[PayeeOut]:
     """The people the viewer owes in this space (members first, in member-list order), who can still be paid."""
-    space = member_space(db, user.id, space_id)
+    space = member_space(db, user.username, space_id)
     positions = dict(
-        db.execute(
-            select(User.username, SpaceMember.position)
-            .select_from(SpaceMember)
-            .join(User, User.id == SpaceMember.user_id)
-            .where(SpaceMember.space_id == space.id)
-        ).all()
+        db.execute(select(SpaceMember.username, SpaceMember.position).where(SpaceMember.space_id == space.id)).all()
     )
-    payable = _payable(db, space.id, user)
-    ids = active_ids(db, payable)
+    payable = _payable(db, space.id, user.username)
     # Someone who has left can still be paid what the viewer owes them, so they are listed too, after the members.
     order = sorted(payable, key=lambda other: (positions.get(other, len(positions) + 1), other))
     return [
-        PayeeOut(user=person(db, ids[other]), owed_minor=payable[other][0], max_minor=payable[other][1])
+        PayeeOut(user=person(db, other), owed_minor=payable[other][0], max_minor=payable[other][1])
         for other in order
         if payable[other][1] > 0  # everything owed is already recorded and waiting for an answer: nothing left to pay
     ]
 
 
 def create_settlement(db: Session, payer: User, space_id: int, data: SettlementCreate) -> SettlementDetailOut:
-    space = member_space(db, payer.id, space_id, lock=True)  # recording a payment depends on what is owed now
+    space = member_space(db, payer.username, space_id, lock=True)  # recording a payment depends on what is owed now
     payee = data.to_username
-    payee_id = active_ids(db, [payee]).get(payee)
-    if payee == payer.username or payee_id is None:
+    if payee == payer.username or db.get(User, payee) is None:
         raise api_error(404, "person_not_found", "Person not found.")
 
     # One payment at a time per person and space. What can still be recorded is read, and then a payment is written,
@@ -84,25 +75,25 @@ def create_settlement(db: Session, payer: User, space_id: int, data: SettlementC
     # commits, so the next one reads the amounts again only after this payment is in.
     db.execute(
         update(SpaceMember)
-        .where(SpaceMember.space_id == space.id, SpaceMember.user_id == payer.id)
+        .where(SpaceMember.space_id == space.id, SpaceMember.username == payer.username)
         .values(position=SpaceMember.position)
     )
-    owed, most = _payable(db, space.id, payer).get(payee, (0, 0))
+    owed, most = _payable(db, space.id, payer.username).get(payee, (0, 0))
     if owed == 0:
-        if db.get(SpaceMember, (space.id, payee_id)) is None:  # someone who left can still be paid
+        if db.get(SpaceMember, (space.id, payee)) is None:  # someone who left can still be paid
             raise api_error(404, "person_not_found", "Person not found.")
-        raise forbidden("owes_nothing", f"You don’t owe {_first_name(db, payee_id)} anything in this space")
+        raise forbidden("owes_nothing", f"You don’t owe {_first_name(db, payee)} anything in this space")
     if data.amount_minor > most:
         raise field_error("amount_minor", f"The most you can record is {format_money(most, space.currency)}")
 
-    settlement = Settlement(space_id=space.id, payer=payer.id, payee=payee_id, amount_minor=data.amount_minor)
+    settlement = Settlement(space_id=space.id, payer=payer.username, payee=payee, amount_minor=data.amount_minor)
     db.add(settlement)
     db.flush()
     notification_service.create_notification(
         db,
-        user_id=payee_id,
+        username=payee,
         type=NotificationType.PAYMENT_TO_CONFIRM,
-        message=f"{_first_name(db, payer.id)} says they paid you {format_money(data.amount_minor, space.currency)}",
+        message=f"{_first_name(db, payer.username)} says they paid you {format_money(data.amount_minor, space.currency)}",
         space_id=space.id,
         space_name=space.name,
         ref_id=settlement.id,
@@ -113,7 +104,7 @@ def create_settlement(db: Session, payer: User, space_id: int, data: SettlementC
 
 
 def get_settlement(db: Session, user: User, settlement_id: int) -> SettlementDetailOut:
-    settlement, space = _settlement_of(db, user.id, settlement_id)
+    settlement, space = _settlement_of(db, user.username, settlement_id)
     return _detail(db, settlement, space)
 
 
@@ -121,8 +112,8 @@ def answer_settlement(
     db: Session, user: User, settlement_id: int, verdict: SettlementStatus
 ) -> SettlementDetailOut:
     """Confirm or reject (`verdict` is CONFIRMED or REJECTED). The payer is told."""
-    settlement, space = _settlement_of(db, user.id, settlement_id, lock=True)  # a confirm changes what is owed
-    if settlement.payee != user.id:
+    settlement, space = _settlement_of(db, user.username, settlement_id, lock=True)  # a confirm changes what is owed
+    if settlement.payee != user.username:
         raise forbidden("not_payee", "Only the person receiving the payment can answer it")
     if settlement.status != SettlementStatus.PENDING:
         raise forbidden("already_answered", "This payment has already been answered")
@@ -141,7 +132,7 @@ def answer_settlement(
     db.execute(
         update(Notification)
         .where(
-            Notification.user_id == user.id,
+            Notification.username == user.username,
             Notification.type == NotificationType.PAYMENT_TO_CONFIRM,
             Notification.ref_id == settlement.id,
             Notification.needs_answer.is_(True),
@@ -150,10 +141,10 @@ def answer_settlement(
     )
     notification_service.create_notification(
         db,
-        user_id=settlement.payer,
+        username=settlement.payer,
         type=NotificationType.PAYMENT_ANSWERED,
         message=(
-            f"{_first_name(db, user.id)} {verdict.value} your "
+            f"{_first_name(db, user.username)} {verdict.value} your "
             f"{format_money(settlement.amount_minor, space.currency)} payment"
         ),
         space_id=space.id,
@@ -165,8 +156,8 @@ def answer_settlement(
 
 
 def cancel_settlement(db: Session, user: User, settlement_id: int) -> SettlementDetailOut:
-    settlement, space = _settlement_of(db, user.id, settlement_id)
-    if settlement.payer != user.id:
+    settlement, space = _settlement_of(db, user.username, settlement_id)
+    if settlement.payer != user.username:
         raise forbidden("not_payer", "Only the person who recorded this payment can cancel it")
     if settlement.status != SettlementStatus.PENDING:
         raise forbidden(
@@ -204,8 +195,8 @@ def cancel_settlement(db: Session, user: User, settlement_id: int) -> Settlement
 # --- helpers ------------------------------------------------------------------------------------
 
 
-def _settlement_of(db: Session, user_id: int, settlement_id: int, *, lock: bool = False) -> tuple[Settlement, Space]:
-    """The payment and its space, if the person is in that space. Otherwise it does not exist for them.
+def _settlement_of(db: Session, username: str, settlement_id: int, *, lock: bool = False) -> tuple[Settlement, Space]:
+    """The payment and its space, if `username` is in that space. Otherwise it does not exist for them.
 
     `lock` takes the space's lock first (see space_access.lock_space): for what changes what people owe.
     """
@@ -214,7 +205,7 @@ def _settlement_of(db: Session, user_id: int, settlement_id: int, *, lock: bool 
         if space_id is not None:
             lock_space(db, space_id)
     settlement = db.get(Settlement, settlement_id)
-    if settlement is None or db.get(SpaceMember, (settlement.space_id, user_id)) is None:
+    if settlement is None or db.get(SpaceMember, (settlement.space_id, username)) is None:
         raise api_error(404, "settlement_not_found", "Payment not found.")
     return settlement, db.get(Space, settlement.space_id)
 
@@ -227,7 +218,7 @@ def _detail(db: Session, settlement: Settlement, space: Space) -> SettlementDeta
             name=space.name,
             icon=space.icon,
             currency=space.currency,
-            owner_username=person(db, space.created_by).username,
+            owner_username=space.created_by,
             created_at=space.created_at,
         ),
         from_user=person(db, settlement.payer),

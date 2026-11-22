@@ -1,6 +1,10 @@
 """Request/response shapes for sign up, sign in, sessions, forgot password and people search."""
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationInfo, field_validator
+
+from app.currencies import SUPPORTED_CURRENCIES
 
 from app.utils.validators import (
     MAX_PERSON_NAME,
@@ -19,16 +23,17 @@ from app.utils.validators import (
 
 
 class RegisterRequest(BaseModel):
-    """Create Account screen (specs § 4.2): username (unique), name, email, phone, password, confirm.
+    """Create Account screen (specs § 4.2): username (unique), name, phone, email, password, confirm.
 
-    Sending it starts the sign-up and emails a code to the email address. The sign-up is `pending` until the code is
-    accepted (§ 4.3); only then can the person sign in. The phone number is kept on the account (E.164, unique).
+    Sending it starts the sign-up and emails a code to the email. The account exists only after the code is accepted
+    (§ 4.3). The phone is collected and checked (a real mobile number, one account per number) but gets no code: it is
+    what people use to find each other when adding people to a space.
     """
 
     username: str = Field(max_length=50)
     name: str = Field(min_length=1, max_length=500)  # a guard against huge bodies; the validator enforces 1-50
+    phone: str = Field(max_length=30)
     email: str = Field(max_length=300)  # a guard against huge bodies; the validator enforces 254
-    phone: str = Field(max_length=40)  # a guard against huge bodies; the validator turns it into E.164
     password: str = Field(max_length=128)
     confirm_password: str = Field(max_length=128)
 
@@ -42,15 +47,15 @@ class RegisterRequest(BaseModel):
     def check_name(cls, v: str) -> str:
         return clean_name(v, MAX_PERSON_NAME)
 
-    @field_validator("email")
-    @classmethod
-    def check_email(cls, v: str) -> str:
-        return normalize_email(v)
-
     @field_validator("phone")
     @classmethod
     def check_phone(cls, v: str) -> str:
         return normalize_phone(v)
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        return normalize_email(v)
 
     @field_validator("password")
     @classmethod
@@ -161,9 +166,17 @@ class AvailabilityOut(BaseModel):
 
 
 class ForgotRequest(BaseModel):
-    """Forgot Password, step a: the username. Its email address gets the code."""
+    """Forgot Password, step a: the username and the email address on that account. When they belong together, a code is
+    emailed to that address. The reply is the same when they do not."""
 
     username: str = Field(min_length=1, max_length=50)
+    email: str = Field(min_length=1, max_length=300)
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        # Only the FORMAT is checked, with the same 422 for everybody. Whether it matches an account is never told.
+        return normalize_email(v)
 
     @field_validator("username")
     @classmethod
@@ -244,14 +257,24 @@ class UserSummary(BaseModel):
 
 
 class UserMe(BaseModel):
-    """GET /users/me: the signed-in person's own profile, so the email and phone are theirs to see."""
+    """GET /users/me: the signed-in person's own profile, so the email is theirs to see."""
 
     model_config = ConfigDict(from_attributes=True)
 
     username: str
     name: str
-    email: str | None  # an older account may have none
-    phone: str  # E.164
+    phone: str | None  # empty for an account made before phone numbers came back
+    email: str
+    currency: str  # their default currency, used for a new space when none is picked
+    notifications_on: bool  # the Profile page's switch; whether pushes may be sent
+
+
+class DeleteAccountRequest(BaseModel):
+    """Profile, Delete my account: the password is asked for again, because this cannot be undone."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(max_length=128)  # not checked for strength: it is compared with the one on file
 
 
 class ExportRequest(BaseModel):
@@ -262,21 +285,49 @@ class ExportRequest(BaseModel):
     password: str = Field(max_length=128)  # not checked for strength: it is compared with the one on file
 
 
-class UserUpdate(BaseModel):
-    """Profile, Edit (specs § 13): the name. A field left out, or null, stays as it is.
+class DeviceRemove(BaseModel):
+    """Sign-out: forget this phone's push token."""
 
-    The username, email and phone cannot be changed, so sending them is an error rather than being ignored.
-    The theme stays on the phone, and so do the default currency and the notifications switch.
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=255)
+
+    @field_validator("token")
+    @classmethod
+    def check_token(cls, v: str) -> str:
+        return reject_nul(v)
+
+
+class DeviceIn(DeviceRemove):
+    """Register this phone's push token (the app does it on every launch)."""
+
+    platform: Literal["android", "ios", "web"]
+
+
+class UserUpdate(BaseModel):
+    """Profile, Edit and the preferences (specs § 13): any of these. A field left out, or null, stays as it is.
+
+    The username and the email address cannot be changed, so sending them is an error rather than being ignored.
+    The theme is not here: it stays on the phone.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=500)  # the validator enforces 1-50
+    currency: str | None = None  # the default currency
+    notifications_on: StrictBool | None = None
 
     @field_validator("name")
     @classmethod
     def check_name(cls, v: str | None) -> str | None:
         return None if v is None else clean_name(v, MAX_PERSON_NAME)
+
+    @field_validator("currency")
+    @classmethod
+    def check_currency(cls, v: str | None) -> str | None:
+        if v is not None and v not in SUPPORTED_CURRENCIES:
+            raise ValueError(f"Currency must be one of: {', '.join(SUPPORTED_CURRENCIES)}")
+        return v
 
 
 class UserSearchResult(UserSummary):

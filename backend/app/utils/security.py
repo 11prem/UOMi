@@ -66,18 +66,13 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def new_session_id() -> str:
-    """The `sid` claim of an access token: 32 hex characters, stored on the user's row while the session lives."""
-    return secrets.token_hex(16)
-
-
 # ---------------------------------------------------------------------------
 # Access token (JWT)
 # ---------------------------------------------------------------------------
 
 
 def create_access_token(username: str, session_id: str) -> str:
-    """The username is the identity; `sid` ties the token to the session stored on that user's row."""
+    """The username is the identity; `sid` ties the token to a row in refresh_tokens (the session)."""
     now = utcnow()
     payload = {
         "iss": settings.JWT_ISSUER,  # who made the token: this API
@@ -117,8 +112,6 @@ def decode_access_token(token: str) -> tuple[str, str]:
 
 
 def generate_otp(length: int | None = None) -> str:
-    if settings.OTP_FIXED_CODE:  # development only (production refuses it): every code is the same one
-        return settings.OTP_FIXED_CODE
     return "".join(secrets.choice(string.digits) for _ in range(length or settings.OTP_LENGTH))
 
 

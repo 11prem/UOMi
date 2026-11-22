@@ -1,4 +1,4 @@
-"""Background scheduler: the daily payment reminders and the daily clean-up (each can be switched off)."""
+"""Background scheduler: the daily payment reminders, the daily clean-up and the push worker (each can be switched off)."""
 
 from datetime import datetime, timezone
 
@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.config import settings
 from app.database import SessionLocal
+from app.services.push_service import run_push_job
 from app.services.reminder_service import process_due_reminders
 from app.services.retention_service import run_retention_job
 
@@ -44,6 +45,8 @@ def start_scheduler() -> None:
         _add_daily(run_reminder_job, "payment_reminders")
     if settings.RETENTION_ENABLED:
         _add_daily(run_retention_job, "data_retention")
+    if settings.PUSH_ENABLED:
+        _add(run_push_job, "push_delivery", seconds=settings.PUSH_POLL_SECONDS)  # one run at a time
     scheduler.start()
 
 

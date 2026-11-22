@@ -1,8 +1,8 @@
 """The "export my data" file (task 1.7.3): everything the signed-in person can see, as plain JSON.
 
-It holds the profile (with their own email and phone), the spaces they are in (members by name, with when they joined), every
+It holds the profile (with their own email), the spaces they are in (members by name, with when they joined), every
 expense in those spaces with all its shares and answers, every payment, and their own notification cards. It never holds
-another person's email address or phone number, a password hash or a token. A space they have left is not in it: they can no longer see it.
+another person's email address, a password hash or a token. A space they have left is not in it: they can no longer see it.
 Expenses and payments are flat lists, each carrying its `space_id`.
 """
 
@@ -20,8 +20,10 @@ from app.schemas.user import UserSummary
 class ExportProfile(BaseModel):
     username: str
     name: str
-    email: str | None  # the person's own address
-    phone: str  # the person's own number
+    phone: str | None  # the person's own number
+    email: str  # the person's own address
+    currency: str
+    notifications_on: bool
     created_at: dt.datetime
 
 

@@ -23,8 +23,8 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    username: Mapped[str] = mapped_column(
+        String(30), ForeignKey("users.username", ondelete="CASCADE"), index=True
     )  # who the card is for
     type: Mapped[NotificationType] = mapped_column(Enum(NotificationType, native_enum=False, length=30))
     message: Mapped[str] = mapped_column(Text)

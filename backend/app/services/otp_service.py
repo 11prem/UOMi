@@ -1,103 +1,48 @@
-"""Emailed one-time codes, shared by sign-up verification and forgot password.
-
-The codes live in columns of the `users` row (a sign-up is a row with `status = 'pending'`; a password reset uses the
-`reset_*` columns), so each person has at most ONE open sign-up code and ONE open reset code. A new request replaces the
-old code of its kind.
+"""Emailed one-time codes, shared by sign-up verification (`PendingSignup`) and forgot password (`PasswordReset`).
 
 The rules (specs § 3.4), all enforced here so the two flows cannot drift apart:
   - A code is valid OTP_TTL_MINUTES (5). Expired: `code_expired`.
   - A wrong code is `invalid_code`. The OTP_MAX_ATTEMPTS-th wrong code (5) locks that sign-up or reset for
     OTP_LOCK_MINUTES (10): `otp_locked` with `retry_after_seconds`. While locked every guess is refused, the right
-    code included, and so is "resend". The lock is stored in the columns that exist: it is "attempts used up, and the
-    expiry moved OTP_LOCK_MINUTES ahead", so there is no column for it.
+    code included, and so is "resend".
   - "Resend code" gives the SAME request a fresh code, after OTP_RESEND_COOLDOWN_SECONDS (30): `resend_too_soon`.
     A request gets at most OTP_MAX_SENDS_PER_REQUEST emails (3), the first included.
   - An email address (sign-up) or typed username (forgot) can start at most OTP_MAX_REQUESTS_PER_HOUR requests an
-    hour, and the whole API sends at most EMAIL_DAILY_CAP emails in 24 hours.
+    hour, and the whole API sends at most EMAIL_DAILY_CAP emails a UTC day. These limits hold under a parallel burst.
 Each of these has its own error code, so the app can show the spec's own words for each.
 
-What the `users` columns cannot hold (how many emails one request has sent, how many requests an address made this
-hour, how many emails went out today) is counted in memory by the rate limiter (utils/rate_limit.py). Those counters
-are exact inside one API process and forgotten on a restart, like every other limit there.
+Both tables hold the same columns for this (`code_hash`, `attempts`, `locked_until`, `send_count`, `last_sent_at`,
+`expires_at`, `valid_until`, `email`), so every function here takes the model class.
 """
 
-import base64
 import logging
 import math
 import secrets
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from fastapi import HTTPException
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.user import STATUS_ACTIVE, User
+from app.models.password_reset import PasswordReset
+from app.models.pending_signup import PendingSignup
+from app.models.user import User
 from app.services import email_service
 from app.utils import security
 from app.utils.errors import api_error
-from app.utils.rate_limit import HOUR, limiter
 from app.utils.validators import mask_email
 
 logger = logging.getLogger(__name__)
 
 SIGNUP_PREFIX = "su_"  # a `pending_id` starts with this, a `reset_id` with RESET_PREFIX: "resend" tells them apart
 RESET_PREFIX = "pw_"
-DAY = 86400
+NEVER_MATCHES = "x" * 64  # the stored hash of a code nobody was sent: not valid hex, so no guess can equal it
 
 
-@dataclass(frozen=True)
-class Channel:
-    """The three `users` columns that hold one kind of code."""
-
-    code_hash: str
-    attempts: str
-    expires_at: str
-
-
-SIGNUP = Channel("signup_code_hash", "signup_attempts", "signup_expires_at")
-RESET = Channel("reset_code_hash", "reset_attempts", "reset_code_expires_at")
-
-
-def new_pending_id() -> str:
-    """The unguessable id the app holds for a sign-up."""
-    return SIGNUP_PREFIX + secrets.token_urlsafe(16)
-
-
-# --- the reset id ---------------------------------------------------------------------------------------
-#
-# A password reset has no id column, so the `reset_id` the app holds is made so that the server can read it back
-# without storing it: a random nonce, the user's id scrambled with a key derived from the nonce, and a signature. It tells
-# nothing about whose id it is (a request for a username that does not exist gets one of the same shape, carrying id 0),
-# and nobody can forge one.
-
-
-def make_reset_id(user_id: int) -> str:
-    """The `reset_id` for this person, or for nobody (0) when the username does not exist."""
-    nonce = secrets.token_bytes(8)
-    pad = security.keyed_digest("reset-id-pad", nonce.hex())[:4]
-    scrambled = (user_id ^ int.from_bytes(pad, "big")).to_bytes(4, "big")
-    body = nonce + scrambled
-    signature = security.keyed_digest("reset-id-signature", body.hex())[:8]
-    return RESET_PREFIX + base64.urlsafe_b64encode(body + signature).decode("ascii").rstrip("=")
-
-
-def read_reset_id(reset_id: str) -> int | None:
-    """The user id inside a `reset_id` (0 for a made-up one), or None when it is not one this server made."""
-    if not reset_id.startswith(RESET_PREFIX):
-        return None
-    text = reset_id[len(RESET_PREFIX):]
-    try:
-        raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except (ValueError, TypeError):
-        return None
-    if len(raw) != 20:
-        return None
-    body, signature = raw[:12], raw[12:]
-    if not security.safe_equal(signature.hex(), security.keyed_digest("reset-id-signature", body.hex())[:8].hex()):
-        return None
-    pad = security.keyed_digest("reset-id-pad", body[:8].hex())[:4]
-    return int.from_bytes(body[8:], "big") ^ int.from_bytes(pad, "big")
+def new_public_id(prefix: str) -> str:
+    """The unguessable id the app holds for a sign-up or reset request."""
+    return prefix + secrets.token_urlsafe(16)
 
 
 # --- errors -------------------------------------------------------------------------------------------
@@ -137,10 +82,6 @@ def resend_too_soon_error(seconds: float):
     return _wait(429, "resend_too_soon", f"Please wait {max(1, seconds)} seconds before asking for another code.", seconds)
 
 
-def too_many_requests_error(seconds: float):
-    return _wait(429, "too_many_requests", "Too many codes requested. Try again later.", math.ceil(seconds))
-
-
 # --- sending ------------------------------------------------------------------------------------------
 
 
@@ -156,134 +97,138 @@ def send_code_email(email: str, code: str) -> None:
         logger.exception("Could not send the one-time code email")
 
 
-FAKE_LOCAL_LENGTHS = range(5, 11)  # a made-up local part is this many characters, like the names real people use
-_FAKE_LOCAL_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
-
-
-def fake_masked_email(db: Session, username: str) -> str:
-    """The masked email shown for a username that does not exist, so the reply looks like any other.
-
-    It is derived from the username under the OTP key: asking again for the same name gives the same address, as it
-    would for a real account. Its domain is copied from a real user's email (chosen by the same key), so the mix of
-    domains matches the real accounts. A made-up address that was always at one fixed domain would give away every
-    real account whose email is anywhere else. With no users at all it falls back to example.com.
-    """
-    digest = security.keyed_digest("made-up-email", username)
-    domain = "example.com"
-    live = (User.status == STATUS_ACTIVE, User.email.is_not(None))
-    count = db.scalar(select(func.count()).select_from(User).where(*live)) or 0
-    if count:
-        pick = int.from_bytes(digest[16:20], "big") % count
-        real_email = db.scalar(select(User.email).where(*live).order_by(User.username).offset(pick).limit(1))
-        domain = real_email.partition("@")[2] or domain
-    length = FAKE_LOCAL_LENGTHS[digest[20] % len(FAKE_LOCAL_LENGTHS)]
-    local = "".join(_FAKE_LOCAL_ALPHABET[byte % len(_FAKE_LOCAL_ALPHABET)] for byte in digest[:length])
-    return mask_email(f"{local}@{domain}")
-
-
 # --- limits -------------------------------------------------------------------------------------------
 
 
-def enforce_daily_code_cap(*, record: bool = True) -> None:
-    """The last-resort brake on the email bill: at most EMAIL_DAILY_CAP emails in any 24 hours, for everyone together."""
-    cap = settings.EMAIL_DAILY_CAP
-    retry_after = limiter.hit("otp:daily-cap", cap, DAY) if record else limiter.peek("otp:daily-cap", cap, DAY)
-    if retry_after:
-        logger.error("Daily code cap of %s reached: refusing code requests for a while", cap)
-        raise _wait(429, "too_many_requests", "We can't send more codes right now. Please try again later.", retry_after)
+def enforce_daily_code_cap(db: Session, now: datetime, *, mine: bool = False, warn: bool = True) -> None:
+    """The last-resort brake on the email bill: at most EMAIL_DAILY_CAP emails a (UTC) day, for everyone together.
 
+    Counted from `send_count` of the rows created today (the first email and every resend), in both tables. A
+    sign-up's row is kept after it is verified (marked used), and rows are never deleted on the day they are made,
+    so the count cannot be reset by finishing or abandoning sign-ups. A resend of a request made before midnight is
+    counted on the day the request began.
 
-def _start_keys(key: str) -> tuple[str, str]:
-    return f"otp:start:{key}", f"otp:cooldown:{key}"
-
-
-def check_start_limits(key: str) -> None:
-    """Refuse (429) a new sign-up or reset request when `key` (the email, or the typed username) asked too often.
-
-    At most OTP_MAX_REQUESTS_PER_HOUR requests an hour, and the resend cooldown between them. Nothing is recorded here:
-    `record_start` does that once the request is going ahead. Requests for a name that does not exist are counted exactly
-    like real ones, so these refusals reveal nothing.
+    `mine` says the request being checked is already recorded (and committed) and is the newest email counted: it is
+    refused when everyone else's emails already fill the cap. Either way the rule is the same: refused when the OTHER
+    emails of the day are `cap` or more.
     """
-    hourly, cooldown = _start_keys(key)
-    wait = limiter.peek(hourly, settings.OTP_MAX_REQUESTS_PER_HOUR, HOUR)
-    if wait:
-        raise too_many_requests_error(wait)
-    wait = limiter.peek(cooldown, 1, settings.OTP_RESEND_COOLDOWN_SECONDS)
-    if wait:
-        raise resend_too_soon_error(wait)
-    enforce_daily_code_cap(record=False)
+    cap = settings.EMAIL_DAILY_CAP
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    total = sum(
+        db.scalar(select(func.coalesce(func.sum(model.send_count), 0)).where(model.created_at >= day_start)) or 0
+        for model in (PasswordReset, PendingSignup)
+    )
+    others = total - 1 if mine else total
+    if others >= cap:
+        retry_after = max(1, math.ceil((day_start + timedelta(days=1) - now).total_seconds()))
+        logger.error("Daily code cap of %s reached: refusing code requests until UTC midnight", cap)
+        raise _wait(429, "too_many_requests", "We can't send more codes right now. Please try again later.", retry_after)
+    if warn and others + 1 == math.ceil(cap * 0.8):
+        logger.warning("Daily code cap: %s of %s used", others + 1, cap)
 
 
-def record_start(key: str) -> None:
-    """Count one new request against `key` and against the daily cap. Raises 429 if a parallel one got in first."""
-    hourly, cooldown = _start_keys(key)
-    wait = limiter.hit(hourly, settings.OTP_MAX_REQUESTS_PER_HOUR, HOUR)
-    if wait:
-        raise too_many_requests_error(wait)
-    wait = limiter.hit(cooldown, 1, settings.OTP_RESEND_COOLDOWN_SECONDS)
-    if wait:
-        raise resend_too_soon_error(wait)
-    enforce_daily_code_cap()
+def _enforce_start_limits(db: Session, model, key_column, key_value: str, now: datetime, mine_id: int | None) -> None:
+    """At most OTP_MAX_REQUESTS_PER_HOUR requests per key in an hour, and the resend cooldown between them.
+
+    The key is the email address for sign-ups and the typed username for forgot password. Requests for a name that
+    does not exist are written and counted exactly like real ones, so these refusals reveal nothing.
+    """
+    recent = db.scalars(
+        select(model).where(key_column == key_value, model.created_at > now - timedelta(hours=1)).order_by(model.created_at.desc())
+    ).all()  # newest first
+    others = [row for row in recent if row.id != mine_id]  # `mine_id` is the request being checked, if it is recorded
+    per_hour = settings.OTP_MAX_REQUESTS_PER_HOUR
+    if len(others) >= per_hour:
+        wait = (others[per_hour - 1].created_at + timedelta(hours=1) - now).total_seconds()
+        raise _wait(429, "too_many_requests", "Too many codes requested. Try again later.", math.ceil(wait))
+    if others:
+        last_text = max(others[0].last_sent_at or others[0].created_at, others[0].created_at)
+        elapsed = (now - last_text).total_seconds()
+        if elapsed < settings.OTP_RESEND_COOLDOWN_SECONDS:
+            raise resend_too_soon_error(settings.OTP_RESEND_COOLDOWN_SECONDS - elapsed)
 
 
-def flow_end(expires_at: datetime) -> datetime:
-    """When a sign-up or reset request is forgotten: OTP_FLOW_TTL_MINUTES after its newest code was sent."""
-    return expires_at - timedelta(minutes=settings.OTP_TTL_MINUTES) + timedelta(minutes=settings.OTP_FLOW_TTL_MINUTES)
+def check_limits(db: Session, model, key_column, key_value: str, now: datetime, *, mine_id: int | None = None) -> None:
+    """The limits on starting a sign-up or a forgot-password request: per key (hourly and cooldown), then the daily cap.
 
-
-def is_locked(attempts: int, expires_at: datetime | None, now: datetime) -> bool:
-    return attempts >= settings.OTP_MAX_ATTEMPTS and expires_at is not None and expires_at > now
+    Called twice for each new request. First before anything is written, a cheap refusal that saves the password
+    hash. Then again right after the request has been recorded AND committed (`mine_id`), which is what stops a
+    parallel burst: a check that reads and a row that is written much later let ten simultaneous requests all pass.
+    Recording first closes that (the same way the sign-in lockout does): the k-th request to be committed sees at least
+    k rows, so only the first few get through, and a request that is refused takes its own row back out.
+    """
+    try:
+        _enforce_start_limits(db, model, key_column, key_value, now, mine_id)
+        enforce_daily_code_cap(db, now, mine=mine_id is not None, warn=mine_id is not None)
+    except HTTPException:
+        if mine_id is not None:
+            db.execute(delete(model).where(model.id == mine_id))
+            db.commit()
+        raise
 
 
 # --- checking a code ----------------------------------------------------------------------------------
 
 
-def check_code(db: Session, channel: Channel, user: User, code: str, now: datetime) -> None:
+def check_code(db: Session, model, row, code: str, now: datetime) -> None:
     """Return quietly if `code` is the right, unexpired code and the request is not locked. Otherwise raise.
 
     The guess is counted in one UPDATE ... RETURNING, so parallel guesses each get their own attempt number and a
     burst cannot get more than OTP_MAX_ATTEMPTS guesses in before the lock. The code is compared only after it has
-    been counted.
+    been counted. The lock that follows the last wrong guess is set here, and a lock that has run out is lifted
+    here: the next guesses start from zero again.
     """
-    # Everything needed is copied out first: a commit marks the row's attributes as stale.
-    user_id, email = user.id, user.email
-    stored_hash = getattr(user, channel.code_hash)
-    expires_at = getattr(user, channel.expires_at)
-    used = getattr(user, channel.attempts)
-    hash_col, attempts_col, expires_col = (getattr(User, name) for name in (channel.code_hash, channel.attempts, channel.expires_at))
+    # Everything needed is copied out first. A commit marks the row's attributes as stale, and reading a stale one
+    # re-queries the row, which a parallel request may have deleted (a sign-up that was just used up).
+    row_id, stored_hash, email = row.id, row.code_hash, row.email
+    locked_until, expires_at = row.locked_until, row.expires_at
 
-    if stored_hash is None or expires_at is None:
-        raise request_expired_error()
-    if is_locked(used, expires_at, now):
-        raise locked_error((expires_at - now).total_seconds())
-    if used >= settings.OTP_MAX_ATTEMPTS or expires_at <= now:  # the lock has run out, or the code has
+    if locked_until is not None:
+        if locked_until > now:
+            raise locked_error((locked_until - now).total_seconds())
+        db.execute(
+            update(model)
+            .where(model.id == row_id, model.locked_until <= now)
+            .values(locked_until=None, attempts=0)
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+    if expires_at <= now:
         raise code_expired_error()
 
     attempts = db.execute(
-        update(User)
-        .where(User.id == user_id, attempts_col < settings.OTP_MAX_ATTEMPTS, expires_col > now, hash_col == stored_hash)
-        .values({channel.attempts: attempts_col + 1})
-        .returning(attempts_col)
+        update(model)
+        .where(
+            model.id == row_id,
+            model.attempts < settings.OTP_MAX_ATTEMPTS,
+            model.locked_until.is_(None),
+            model.expires_at > now,
+        )
+        .values(attempts=model.attempts + 1)
+        .returning(model.attempts)
         .execution_options(synchronize_session=False)
     ).scalar_one_or_none()
     db.commit()
-    if attempts is None:  # out of guesses, locked a moment ago, just expired, replaced, or used up
-        current = db.execute(select(attempts_col, expires_col, hash_col).where(User.id == user_id)).one_or_none()
-        if current is None or current[2] is None:  # a parallel request used this sign-up up or removed it
+    if attempts is None:  # out of guesses (the lock may not be written yet), locked a moment ago, just expired, or used up
+        current = db.execute(
+            select(model.locked_until, model.attempts).where(model.id == row_id)
+        ).one_or_none()
+        if current is None:  # a parallel request used this sign-up up (the account was created) a moment ago
             raise not_found_error()
-        if is_locked(current[0], current[1], now):
-            raise locked_error((current[1] - now).total_seconds())
-        if current[2] != stored_hash:  # a fresh code replaced this one a moment ago
-            raise invalid_code_error()
+        if current.locked_until is not None and current.locked_until > now:
+            raise locked_error((current.locked_until - now).total_seconds())
+        if current.attempts >= settings.OTP_MAX_ATTEMPTS:
+            raise locked_error(settings.OTP_LOCK_MINUTES * 60)
         raise code_expired_error()
 
-    if email is not None and security.safe_equal(stored_hash, security.hash_otp(email, code)):
+    if security.safe_equal(stored_hash, security.hash_otp(email, code)):
         return
     if attempts >= settings.OTP_MAX_ATTEMPTS:
+        lock_until = now + timedelta(minutes=settings.OTP_LOCK_MINUTES)
         db.execute(
-            update(User)
-            .where(User.id == user_id, attempts_col >= settings.OTP_MAX_ATTEMPTS, hash_col == stored_hash)
-            .values({channel.expires_at: now + timedelta(minutes=settings.OTP_LOCK_MINUTES)})
+            update(model)
+            .where(model.id == row_id, model.locked_until.is_(None))
+            .values(locked_until=lock_until)
             .execution_options(synchronize_session=False)
         )
         db.commit()
@@ -291,55 +236,38 @@ def check_code(db: Session, channel: Channel, user: User, code: str, now: dateti
     raise invalid_code_error()
 
 
-def check_made_up_code(ref: str) -> None:
-    """A guess at the code of a request for a username that does not exist. It can never be right.
-
-    It behaves as a real request would: `invalid_code` for the first guesses, then the lock after the OTP_MAX_ATTEMPTS-th
-    wrong one. The count is kept in memory under the request's id.
-    """
-    window = settings.OTP_LOCK_MINUTES * 60
-    key = f"otp:made-up:{ref}"
-    wait = limiter.hit(key, settings.OTP_MAX_ATTEMPTS, window)
-    if wait:
-        raise locked_error(wait)
-    if limiter.count(key, window) >= settings.OTP_MAX_ATTEMPTS:
-        raise locked_error(window)
-    raise invalid_code_error()
-
-
 # --- resending ----------------------------------------------------------------------------------------
 
 
-def renew_code(db: Session, channel: Channel, user: User, now: datetime, ref: str) -> str:
+def renew_code(db: Session, model, row, now: datetime) -> str:
     """The "Resend code" link: a fresh code for the same request. Returns it; the caller emails it.
 
     Refused while locked (so the lock cannot be skipped by asking again), inside the cooldown, and after
     OTP_MAX_SENDS_PER_REQUEST emails. The new code starts from zero wrong guesses.
     """
-    user_id, email = user.id, user.email
-    old_expires = getattr(user, channel.expires_at)
-    used = getattr(user, channel.attempts)
-    if is_locked(used, old_expires, now):
-        raise locked_error((old_expires - now).total_seconds())
-    elapsed = (now - (old_expires - timedelta(minutes=settings.OTP_TTL_MINUTES))).total_seconds()
+    if row.locked_until is not None and row.locked_until > now:
+        raise locked_error((row.locked_until - now).total_seconds())
+    last_text = row.last_sent_at or row.created_at
+    elapsed = (now - last_text).total_seconds()
     if elapsed < settings.OTP_RESEND_COOLDOWN_SECONDS:
         raise resend_too_soon_error(settings.OTP_RESEND_COOLDOWN_SECONDS - elapsed)
-    # The first email was sent when the request was made: a request gets OTP_MAX_SENDS_PER_REQUEST - 1 more.
-    wait = limiter.hit(f"otp:sends:{ref}", max(1, settings.OTP_MAX_SENDS_PER_REQUEST - 1), settings.OTP_FLOW_TTL_MINUTES * 60)
-    if wait:
-        raise too_many_requests_error(max(wait, 60))
-    enforce_daily_code_cap()
+    if row.send_count >= settings.OTP_MAX_SENDS_PER_REQUEST:
+        wait = (row.created_at + timedelta(hours=1) - now).total_seconds()
+        raise _wait(429, "too_many_requests", "Too many codes requested. Try again later.", math.ceil(max(wait, 60)))
+    enforce_daily_code_cap(db, now)
 
     code = security.generate_otp()
     claimed = db.execute(
-        update(User)
-        .where(User.id == user_id, getattr(User, channel.expires_at) == old_expires)  # a parallel resend that won leaves 0 rows
+        update(model)
+        .where(model.id == row.id, model.send_count == row.send_count)  # a parallel resend that won leaves 0 rows here
         .values(
-            {
-                channel.code_hash: security.hash_otp(email, code),
-                channel.attempts: 0,
-                channel.expires_at: now + timedelta(minutes=settings.OTP_TTL_MINUTES),
-            }
+            code_hash=security.hash_otp(row.email, code),
+            attempts=0,
+            locked_until=None,
+            send_count=row.send_count + 1,
+            last_sent_at=now,
+            expires_at=now + timedelta(minutes=settings.OTP_TTL_MINUTES),
+            valid_until=now + timedelta(minutes=settings.OTP_FLOW_TTL_MINUTES),
         )
         .execution_options(synchronize_session=False)
     )
@@ -347,14 +275,3 @@ def renew_code(db: Session, channel: Channel, user: User, now: datetime, ref: st
     if claimed.rowcount != 1:
         raise resend_too_soon_error(settings.OTP_RESEND_COOLDOWN_SECONDS)
     return code
-
-
-def check_made_up_resend(ref: str) -> None:
-    """"Resend" for a request that was made up: the same cooldown and the same cap on emails as a real one, no email."""
-    wait = limiter.hit(f"otp:made-up-resend:{ref}", 1, settings.OTP_RESEND_COOLDOWN_SECONDS)
-    if wait:
-        raise resend_too_soon_error(wait)
-    wait = limiter.hit(f"otp:sends:{ref}", max(1, settings.OTP_MAX_SENDS_PER_REQUEST - 1), settings.OTP_FLOW_TTL_MINUTES * 60)
-    if wait:
-        raise too_many_requests_error(max(wait, 60))
-    enforce_daily_code_cap()

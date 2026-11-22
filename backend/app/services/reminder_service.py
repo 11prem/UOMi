@@ -33,13 +33,12 @@ def process_due_reminders(db: Session, now: datetime | None = None) -> int:
         .where(
             ExpenseShare.status == ShareStatus.ACCEPTED,
             ExpenseShare.responded_at.is_not(None),
-            ExpenseShare.user_id != Expense.paid_by,
+            ExpenseShare.username != Expense.paid_by,
         )
     ).all()
 
-    sides: dict[tuple[int, int], dict[str, int]] = {}  # (space, debtor id) -> viewer_pairs, once per run
-    notified: set[tuple[int, int, int]] = set()  # (debtor id, payer id, space) already sent this run
-    users: dict[int, User] = {}  # people met this run
+    sides: dict[tuple[int, str], dict[str, int]] = {}  # (space, debtor) -> viewer_pairs, once per run
+    notified: set[tuple[str, str, int]] = set()  # (debtor, payer, space) already sent this run
     created_count = 0
 
     try:
@@ -62,17 +61,12 @@ def process_due_reminders(db: Session, now: datetime | None = None) -> int:
                 if already_sent is not None:
                     continue
 
-                for user_id in (share.user_id, expense.paid_by):
-                    if user_id not in users:
-                        users[user_id] = db.get(User, user_id)
-                debtor, payer = users[share.user_id], users[expense.paid_by]
-
-                side_key = (expense.space_id, debtor.id)
+                side_key = (expense.space_id, share.username)
                 if side_key not in sides:
-                    sides[side_key] = viewer_pairs(db, expense.space_id, debtor.username)
+                    sides[side_key] = viewer_pairs(db, expense.space_id, share.username)
 
                 # Negative: the debtor owes the payer, under the Space page's balance rules.
-                owed = -sides[side_key].get(payer.username, 0)
+                owed = -sides[side_key].get(expense.paid_by, 0)
 
                 if owed <= 0:
                     continue
@@ -84,16 +78,16 @@ def process_due_reminders(db: Session, now: datetime | None = None) -> int:
                     )
                 )
 
-                pair = (debtor.id, payer.id, expense.space_id)
+                pair = (share.username, expense.paid_by, expense.space_id)
                 if pair in notified:
                     continue
                 notified.add(pair)
 
                 space = db.get(Space, expense.space_id)
-                payer_first_name = payer.name.split()[0]
+                payer_first_name = db.get(User, expense.paid_by).name.split()[0]
                 create_notification(
                     db,
-                    user_id=debtor.id,
+                    username=share.username,
                     type=NotificationType.REMINDER,
                     message=(
                         f"You owe {payer_first_name} {format_money(owed, space.currency)}. "
