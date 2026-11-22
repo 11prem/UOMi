@@ -6,9 +6,9 @@ UOMi is a shared-expense app for small groups. Friends, flatmates or a travellin
 
 This repository holds the whole product: the Android app, the FastAPI backend, and the design and specification documents that both were built from.
 
-> **Status: v0.1.0, a test build.** The app is complete in *demo mode*. Against the real backend, sign-in, Home, Create Space, the Space page and Notifications work today. Expenses, settle up and the rest are still being built on the server. See [Project status](#project-status).
+> **Status: v0.2.0, a test build.** The app is complete in *demo mode*. Against the real backend, sign-up with the emailed code, forgot password, sign-in, Home, Create Space, the Space page, Notifications and the Transactions list work today. The server now has expense and settle-up endpoints too, but the app's screens for them still show "Not available on this server yet" in server mode. See [Project status](#project-status).
 
-**Quick start:** download `UOMi-0.1.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases), install it on an Android phone, and sign in as `kabir.r` / `demo1234`. No server is needed.
+**Quick start:** download `UOMi-0.2.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases), install it on an Android phone, and sign in as `kabir.r` / `demo1234`. No server is needed.
 
 ## Contents
 
@@ -31,7 +31,7 @@ This repository holds the whole product: the Android app, the FastAPI backend, a
 - **Settle up with a confirmation.** One person records a payment, the other confirms or rejects it, and only confirmed payments change a balance.
 - **Clear balances.** Each person sees what they owe or are owed per space and overall. Different currencies are never added together, and the wording ("You owe ₹20 · Swetha") never depends on colour alone.
 - **Notifications and reminders.** Cards for new shares, payments to confirm, answers and additions, plus automatic payment reminders on days 3, 5, 7 and 10.
-- **Phone sign-in.** Username and password, with a texted one-time code to reset a forgotten password and a 10-minute inactivity sign-out.
+- **Email verification.** Username and password. Sign-up collects name, username, phone, email and password; an emailed one-time code verifies a new account (it exists only after the code) and resets a forgotten password (asked for with the username and the email, and shown with a masked email like `ka*****@example.com`). The phone is checked and unique but gets no code. People are found by username or by a complete phone number. A 30-minute inactivity sign-out.
 - **Light and dark themes,** with the Fraunces typeface bundled in the app.
 
 Money is stored as whole minor units (paise, cents) everywhere. There are no floating-point amounts.
@@ -57,7 +57,7 @@ Switching modes signs you out and clears cached data, so the two never mix.
 
 ### 1. On an Android phone (demo mode)
 
-1. Download `UOMi-0.1.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases) and copy it to the phone (Android 7.0 or later).
+1. Download `UOMi-0.2.0.apk` from the [Releases page](https://github.com/11prem/UOMi/releases) and copy it to the phone (Android 7.0 or later).
 2. Open it and allow "install unknown apps" when asked.
 3. Sign in as `kabir.r` with the password `demo1234`.
 
@@ -93,8 +93,9 @@ On macOS or Linux, use `python3 -m venv .venv`, `source .venv/bin/activate` and 
 - `SECRET_KEY` is required and must be at least 32 characters. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`. Use a different key for any real deployment. `.env` is never committed.
 - To let a phone reach the server, start it with `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
 - `python scripts/seed_demo.py` creates 6 people, 5 spaces, 10 expenses, 4 payments and 7 notifications. If `kabir.r` already exists it stops with exit code 1. `--reset` deletes the demo users and **every space they created, including other people's data in those spaces**, then recreates the demo data. The demo passwords are public, so use the seed for development only.
-- There is no SMS provider connected. With `SMS_BACKEND=console`, the one-time code is printed in the server output. Never run that setting in production.
-- Interactive API docs are at <http://127.0.0.1:8000/docs>.
+- With `EMAIL_BACKEND=console` (the default), the one-time code is printed in the server output. Set `EMAIL_BACKEND=smtp` and the `SMTP_*` settings to send real email. Never run that setting in production: with `ENVIRONMENT=production` the API refuses to start with it (and with `DEBUG=true`, a placeholder `SECRET_KEY`, a missing `OTP_HMAC_KEY` or non-https CORS origins).
+- The sign-in, sign-up, search and code limits are counted in memory, per API process. See [`docs/backend-api.md`](docs/backend-api.md) before running more than one worker or putting the API behind a load balancer (`TRUSTED_PROXY_COUNT`).
+- Interactive API docs are at <http://127.0.0.1:8000/docs> (off in production).
 
 The full endpoint list, settings, error codes and design decisions are in [`docs/backend-api.md`](docs/backend-api.md).
 
@@ -125,7 +126,7 @@ The APK lands in `dist\UOMi-<version>.apk`. The first build takes up to about 45
 ## Test
 
 ```bash
-pytest                         # backend, from the repository root: 127 tests on an in-memory database
+pytest                         # backend, from the repository root: 861 tests on an in-memory database
 cd mobile && npm test          # app: 334 tests in 20 suites
 cd mobile && npx tsc --noEmit  # app type check
 ```
@@ -134,12 +135,12 @@ cd mobile && npx tsc --noEmit  # app type check
 
 ```
 app/          FastAPI backend: models, schemas, routers, services, utils
-migrations/   Alembic migrations (0001 initial, 0002 spec alignment, payment reminders)
-scripts/      seed_demo.py, the demo data for the phone app
+migrations/   Alembic migrations (0001 initial, 0002 spec alignment, payment reminders, refresh-token reuse, phone-verified sign-up, email instead of phone, phone with email)
+scripts/      seed_demo.py, the demo data for the mobile app
 tests/        backend tests
 mobile/       the Expo / React Native app
   app/          screens and navigation (Expo Router)
-  src/domain/   money, phone, splits, balances: pure TypeScript, fully unit-tested
+  src/domain/   money, splits, balances: pure TypeScript, fully unit-tested
   src/services/ one interface with demo and server implementations
   src/ui/       the stationery UI kit from DESIGN.md
 prototype/    the approved HTML prototype, the visual reference
@@ -152,14 +153,15 @@ PRODUCT.md    product brief
 ## Project status
 
 **Done**
-- The Android app: every screen in the specification, in light and dark, in demo mode. In server mode, sign-in, Home, Create Space, people search, the Space page and Notifications.
-- The backend: accounts and sessions, forgot password by phone code, spaces, people search, notifications, balance rules, and payment reminders.
+- The Android app: every screen in the specification, in light and dark, in demo mode. In server mode, sign-up (name, username, phone, email, password, then the emailed code), forgot password (username and email), sign-in, Home, Create Space, people search, the Space page, Notifications and the Transactions list.
+- The backend: accounts with email verification, sessions, forgot password by username, spaces, expenses, settle up, people search, notifications, balance rules, and payment reminders.
 - A standalone debug-signed APK, built from a reproducible script.
 
 **Still to build**
-- **Backend endpoints for:** expenses, settlements, space management (rename, members, leave, delete), transactions, and profile and preferences. Until they exist the app shows "Not available on this server yet" in server mode.
-- **Sign-up with phone verification** and **forgot password by username**. Create Account and Forgot password are disabled in server mode until then.
-- **Before any public deployment:** rate limits, a real SMS provider with spend caps, refresh-token reuse detection, PostgreSQL testing of migration `0002`, and HTTPS.
+- **Backend endpoints for:** profile and preferences. Until they exist the app shows "Not available on this server yet" in server mode.
+- **App, server mode:** the expense calls, and the expense, settle-up and members and space settings screens, which still show "Not available on this server yet" although the endpoints now exist (task 6.1).
+- **Accounts made before phone numbers came back** have no phone and a placeholder email, so they cannot get a reset email. There is no endpoint yet to add or change a phone or an email.
+- **Before any public deployment:** an SMTP server with sending limits, PostgreSQL testing of migrations `0002` to `0004`, and HTTPS.
 - **App:** a real launcher icon, release signing and a Play Store build, testing on real devices, and iOS.
 
 The detailed list, with file references, is in [`BACKEND-DEVIATIONS.md`](BACKEND-DEVIATIONS.md) and [`HANDOVER.md`](HANDOVER.md).
@@ -172,6 +174,8 @@ The detailed list, with file references, is in [`BACKEND-DEVIATIONS.md`](BACKEND
 | [`DESIGN.md`](DESIGN.md) | The visual design system. |
 | [`PRODUCT.md`](PRODUCT.md) | The product brief. |
 | [`docs/backend-api.md`](docs/backend-api.md) | Backend endpoints, settings, error codes and decisions. |
+| [`docs/api-contract.md`](docs/api-contract.md) | Every endpoint in one table, generated from the code (with [`openapi.json`](docs/openapi.json) for generating a typed client). |
+| [`docs/adding-to-the-backend.md`](docs/adding-to-the-backend.md) | How to add an endpoint, table, migration, setting or dependency so it joins up, and which test catches a missed step. |
 | [`mobile/README.md`](mobile/README.md) | Running, testing and building the app. |
 | [`docs/superpowers/specs/2026-11-06-uomi-mobile-app-design.md`](docs/superpowers/specs/2026-11-06-uomi-mobile-app-design.md) | How the app and its backend wiring were designed. |
 | [`docs/superpowers/plans/2026-11-06-uomi-mobile-app.md`](docs/superpowers/plans/2026-11-06-uomi-mobile-app.md) | The build plan and API contract. |

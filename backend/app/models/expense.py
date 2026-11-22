@@ -1,0 +1,36 @@
+"""Expense (a "bill"): one card on the Space page, made, edited and deleted by its creator (expense_service.py).
+
+Who owes what is in `ExpenseShare` (expense_split.py). An edit rewrites the shares and asks everyone again.
+"""
+
+import datetime as dt
+import enum
+
+from sqlalchemy import BigInteger, Date, Enum, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base, UTCDateTime, utcnow
+
+
+class SplitType(str, enum.Enum):
+    EQUAL = "equal"
+    EXACT = "exact"
+    PERCENT = "percent"
+    SHARES = "shares"
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    space_id: Mapped[int] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"), index=True)
+    paid_by: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))
+    created_by: Mapped[str] = mapped_column(String(30), ForeignKey("users.username"))  # may differ from paid_by
+    description: Mapped[str] = mapped_column(String(50))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)  # integer minor units (paise, cents), 64-bit
+    split_type: Mapped[SplitType] = mapped_column(
+        Enum(SplitType, native_enum=False, length=20), default=SplitType.EQUAL
+    )
+    date: Mapped[dt.date] = mapped_column(Date)  # the day the user says the expense happened
+    created_at: Mapped[dt.datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
