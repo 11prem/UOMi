@@ -30,13 +30,12 @@ from app.utils.rate_limit import (
     forgot_limit,
     login_limit,
     email_check_limit,
-    phone_check_limit,
     register_limit,
     resend_limit,
     username_check_limit,
     verify_otp_limit,
 )
-from app.utils.validators import normalize_email, normalize_phone, validate_new_username
+from app.utils.validators import normalize_email, validate_new_username
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -95,16 +94,6 @@ def check_email(email: Annotated[str, Query(max_length=300)], db: Session = Depe
     return AvailabilityOut(available=auth_service.email_available(db, clean))
 
 
-@router.get("/check-phone", response_model=AvailabilityOut, dependencies=[Depends(phone_check_limit)])
-def check_phone(phone: Annotated[str, Query(max_length=30)], db: Session = Depends(get_db)) -> AvailabilityOut:
-    """Is this phone number free? Tells anyone whether a number has an account, so it has a tight limit per address."""
-    try:
-        clean = normalize_phone(phone)
-    except ValueError as problem:
-        raise field_error("phone", str(problem)) from None
-    return AvailabilityOut(available=auth_service.phone_available(db, clean))
-
-
 @router.post("/login", response_model=TokenPair, dependencies=[Depends(login_limit)])
 def login(data: LoginRequest, db: Session = Depends(get_db)) -> TokenPair:
     """Sign In -> Home Page. Same error for a wrong username or password; 429 after too many tries."""
@@ -126,11 +115,11 @@ def refresh(data: RefreshRequest, db: Session = Depends(get_db)) -> TokenPair:
 def forgot(
     data: ForgotRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> ForgotResponse:
-    """Forgot Password: a username and its email -> a code is emailed there, and the masked email comes back.
+    """Forgot Password: a username -> a code is emailed to its address, and the masked email comes back.
 
-    The reply is the same whether or not the username and email belong to the same account.
+    The reply has the same shape for a username that does not exist.
     """
-    return auth_service.request_password_reset(db, data.username, data.email, background_tasks)
+    return auth_service.request_password_reset(db, data.username, background_tasks)
 
 
 @router.post("/verify-otp", response_model=VerifyOTPResponse, dependencies=[Depends(verify_otp_limit)])

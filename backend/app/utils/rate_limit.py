@@ -59,6 +59,26 @@ class SlidingWindowLimiter:
             hits.append(now)
             return 0
 
+    def peek(self, key: str, limit: int, window_seconds: float) -> int:
+        """Like `hit`, but records nothing: 0 when one more hit would be allowed, otherwise the whole seconds to wait."""
+        limit = max(1, limit)
+        now = self.clock()
+        with self._lock:
+            bucket = self._buckets.get(key)
+            if bucket is None:
+                return 0
+            hits = [t for t in bucket[0] if t > now - window_seconds]
+            if len(hits) >= limit:
+                return max(1, math.ceil(hits[0] + window_seconds - now))
+            return 0
+
+    def count(self, key: str, window_seconds: float) -> int:
+        """How many hits `key` has inside the last `window_seconds`."""
+        now = self.clock()
+        with self._lock:
+            bucket = self._buckets.get(key)
+            return 0 if bucket is None else sum(1 for t in bucket[0] if t > now - window_seconds)
+
     def _make_room(self, now: float) -> None:
         """Called with the lock held when the table is full: drop finished windows, then the stalest keys."""
         finished = [key for key, (hits, window) in self._buckets.items() if not hits or hits[-1] <= now - window]
@@ -161,5 +181,4 @@ resend_limit = limit_by_ip("resend", lambda: settings.RESEND_MAX_PER_IP_PER_HOUR
 verify_otp_limit = limit_by_ip("verify-otp", lambda: settings.VERIFY_OTP_MAX_PER_IP_PER_HOUR, HOUR)
 username_check_limit = limit_by_ip("username-check", lambda: settings.USERNAME_CHECK_MAX_PER_IP_PER_MINUTE, MINUTE)
 email_check_limit = limit_by_ip("email-check", lambda: settings.EMAIL_CHECK_MAX_PER_IP_PER_HOUR, HOUR)
-phone_check_limit = limit_by_ip("phone-check", lambda: settings.PHONE_CHECK_MAX_PER_IP_PER_HOUR, HOUR)
 search_ip_limit = limit_by_ip("search", lambda: settings.SEARCH_MAX_PER_IP_PER_MINUTE, MINUTE)

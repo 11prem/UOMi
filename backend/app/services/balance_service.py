@@ -33,27 +33,31 @@ Pairs = dict[tuple[str, str], int]
 
 
 def _nets(db: Session, space_ids: list[int]) -> dict[int, Pairs]:
-    """The non-zero pairs of every given space, using two grouped queries in total."""
+    """The non-zero pairs of every given space, using three grouped queries in total.
+
+    The sums are grouped by person id; the pairs are keyed by username, which is what the rest of the API speaks.
+    """
     nets: dict[int, Pairs] = {space_id: {} for space_id in space_ids}
     if not space_ids:
         return nets
 
-    def add(space_id: int, debtor: str, creditor: str, amount: int) -> None:
+    owed: dict[int, dict[tuple[int, int], int]] = {space_id: {} for space_id in space_ids}  # space -> (debtor, creditor) -> amount
+
+    def add(space_id: int, debtor: int, creditor: int, amount: int) -> None:
         """`debtor` owes `creditor` this much more (a negative amount means less)."""
-        key = (creditor, debtor) if creditor < debtor else (debtor, creditor)
-        nets[space_id][key] = nets[space_id].get(key, 0) + (amount if debtor > creditor else -amount)
+        owed[space_id][(debtor, creditor)] = owed[space_id].get((debtor, creditor), 0) + amount
 
     disputed = select(ExpenseShare.expense_id).where(ExpenseShare.status == ShareStatus.REJECTED)
     shares = db.execute(
-        select(Expense.space_id, ExpenseShare.username, Expense.paid_by, func.sum(ExpenseShare.amount_minor))
+        select(Expense.space_id, ExpenseShare.user_id, Expense.paid_by, func.sum(ExpenseShare.amount_minor))
         .select_from(ExpenseShare)
         .join(Expense, Expense.id == ExpenseShare.expense_id)
         .where(
             Expense.space_id.in_(space_ids),
             Expense.id.not_in(disputed),
-            ExpenseShare.username != Expense.paid_by,
+            ExpenseShare.user_id != Expense.paid_by,
         )
-        .group_by(Expense.space_id, ExpenseShare.username, Expense.paid_by)
+        .group_by(Expense.space_id, ExpenseShare.user_id, Expense.paid_by)
     )
     for space_id, debtor, creditor, total in shares:
         add(space_id, debtor, creditor, total)
@@ -65,6 +69,14 @@ def _nets(db: Session, space_ids: list[int]) -> dict[int, Pairs]:
     )
     for space_id, payer, payee, total in payments:
         add(space_id, payer, payee, -total)
+
+    ids = {person for pairs in owed.values() for pair in pairs for person in pair}
+    usernames = dict(db.execute(select(User.id, User.username).where(User.id.in_(ids))).all()) if ids else {}
+    for space_id, pairs in owed.items():
+        for (debtor_id, creditor_id), amount in pairs.items():
+            debtor, creditor = usernames[debtor_id], usernames[creditor_id]
+            key = (creditor, debtor) if creditor < debtor else (debtor, creditor)
+            nets[space_id][key] = nets[space_id].get(key, 0) + (amount if debtor > creditor else -amount)
 
     return {space_id: {key: v for key, v in pairs.items() if v} for space_id, pairs in nets.items()}
 
@@ -89,13 +101,13 @@ def viewer_pairs(db: Session, space_id: int, username: str) -> dict[str, int]:
     return side_of(pairwise(db, space_id), username)
 
 
-def spaces_of(db: Session, username: str) -> list[Space]:
-    """The spaces `username` is in."""
+def spaces_of(db: Session, user_id: int) -> list[Space]:
+    """The spaces the person is in."""
     return list(
         db.scalars(
             select(Space)
             .join(SpaceMember, SpaceMember.space_id == Space.id)
-            .where(SpaceMember.username == username)
+            .where(SpaceMember.user_id == user_id)
             .order_by(Space.id.desc())
         )
     )
@@ -120,12 +132,12 @@ def _last_activity(db: Session, spaces: Iterable[Space]) -> dict[int, datetime]:
     return latest
 
 
-def space_cards(db: Session, spaces: list[Space], username: str) -> list[SpaceCard]:
+def space_cards(db: Session, spaces: list[Space], user: User) -> list[SpaceCard]:
     """One Home page card per space, in the order given, from a fixed number of queries."""
     if not spaces:
         return []
     ids = [space.id for space in spaces]
-    sides = {space_id: side_of(pairs, username) for space_id, pairs in _nets(db, ids).items()}
+    sides = {space_id: side_of(pairs, user.username) for space_id, pairs in _nets(db, ids).items()}
     member_counts = dict(
         db.execute(
             select(SpaceMember.space_id, func.count())
@@ -167,21 +179,21 @@ def space_cards(db: Session, spaces: list[Space], username: str) -> list[SpaceCa
     ]
 
 
-def space_card(db: Session, space: Space, username: str) -> SpaceCard:
-    return space_cards(db, [space], username)[0]
+def space_card(db: Session, space: Space, user: User) -> SpaceCard:
+    return space_cards(db, [space], user)[0]
 
 
-def overall(db: Session, username: str) -> list[OverallLine]:
-    """What `username` owes and is owed across their spaces, one line per currency.
+def overall(db: Session, user: User) -> list[OverallLine]:
+    """What the person owes and is owed across their spaces, one line per currency.
 
     owe = every negative pair added up, owed = every positive pair added up (so a pair is never
     netted against a different person). Currencies with nothing owed either way are left out."""
-    spaces = spaces_of(db, username)
+    spaces = spaces_of(db, user.id)
     nets = _nets(db, [space.id for space in spaces])
     owe: defaultdict[str, int] = defaultdict(int)
     owed: defaultdict[str, int] = defaultdict(int)
     for space in spaces:
-        for amount in side_of(nets[space.id], username).values():
+        for amount in side_of(nets[space.id], user.username).values():
             if amount < 0:
                 owe[space.currency] -= amount
             else:

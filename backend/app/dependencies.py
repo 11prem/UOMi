@@ -1,7 +1,7 @@
 """FastAPI dependencies that identify the caller.
 
-The rule behind every protected endpoint: the username comes from the token, never from the
-request, and every query starts from it.
+The rule behind every protected endpoint: the person comes from the token, never from the
+request, and every query starts from them.
 
 401 codes the app can switch on:
   not_authenticated  no Authorization header           -> show the Login page
@@ -48,11 +48,7 @@ def get_auth_context(
     except security.TokenError:
         raise api_error(401, "invalid_token", "Invalid access token.", headers=BEARER_HEADERS) from None
 
-    session_service.touch_session(db, session_id, username)  # raises session_expired when idle
-
-    user = db.get(User, username)
-    if user is None or user.deleted_at is not None:
-        raise api_error(401, "invalid_token", "Invalid access token.", headers=BEARER_HEADERS)
+    user = session_service.authenticate_session(db, username, session_id)  # raises session_expired when idle or replaced
     return AuthContext(user=user, session_id=session_id)
 
 

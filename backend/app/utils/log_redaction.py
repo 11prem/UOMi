@@ -15,7 +15,6 @@ REDACTED = "[redacted]"
 SENSITIVE_QUERY_PARAMS = (
     "q",
     "email",
-    "phone",
     "code",
     "otp",
     "password",

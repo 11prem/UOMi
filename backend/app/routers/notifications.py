@@ -30,7 +30,7 @@ def list_notifications(
     current_user: User = Depends(get_current_user),
 ) -> NotificationList:
     """Newest first. Use `next_before` from the response as `before` to load the next page."""
-    return notification_service.list_notifications(db, current_user.username, before, limit)
+    return notification_service.list_notifications(db, current_user.id, before, limit)
 
 
 # `/unread-count` and `/read-all` sit above `/{notification_id}` so the path parameter never swallows them.
@@ -40,7 +40,7 @@ def unread_count(
     current_user: User = Depends(get_current_user),
 ) -> UnreadCount:
     """How many cards the signed-in user has not read yet."""
-    return UnreadCount(unread_count=notification_service.get_unread_count(db, current_user.username))
+    return UnreadCount(unread_count=notification_service.get_unread_count(db, current_user.id))
 
 
 @router.patch("/read-all", response_model=MarkAllReadResponse)
@@ -49,7 +49,7 @@ def read_all_notifications(
     current_user: User = Depends(get_current_user),
 ) -> MarkAllReadResponse:
     """Mark every card of the signed-in user read; `updated_count` is how many were unread."""
-    return MarkAllReadResponse(updated_count=notification_service.mark_all_as_read(db, current_user.username))
+    return MarkAllReadResponse(updated_count=notification_service.mark_all_as_read(db, current_user.id))
 
 
 @router.patch("/{notification_id}", response_model=NotificationOut)
@@ -60,4 +60,4 @@ def update_notification(
     current_user: User = Depends(get_current_user),
 ) -> NotificationOut:
     """Mark a card read (or unread)."""
-    return notification_service.set_read(db, current_user.username, notification_id, data.read)
+    return notification_service.set_read(db, current_user.id, notification_id, data.read)

@@ -26,10 +26,11 @@ from app.schemas.export import (
 from app.schemas.notification import NotificationOut
 from app.schemas.user import UserSummary
 from app.services import balance_service
+from app.services.space_access import people_of
 
 
 def build_export(db: Session, user: User) -> AccountExport:
-    spaces = sorted(balance_service.spaces_of(db, user.username), key=lambda space: space.id)
+    spaces = sorted(balance_service.spaces_of(db, user.id), key=lambda space: space.id)
     space_ids = [space.id for space in spaces]
 
     members = (
@@ -55,28 +56,26 @@ def build_export(db: Session, user: User) -> AccountExport:
         else []
     )
 
-    usernames = {m.username for m in members} | {s.username for s in shares}
-    usernames |= {e.paid_by for e in expenses} | {e.created_by for e in expenses}
-    usernames |= {s.payer for s in settlements} | {s.payee for s in settlements}
-    names = dict(db.execute(select(User.username, User.name).where(User.username.in_(usernames))).all()) if usernames else {}
+    ids = {m.user_id for m in members} | {s.user_id for s in shares} | {space.created_by for space in spaces}
+    ids |= {e.paid_by for e in expenses} | {e.created_by for e in expenses}
+    ids |= {s.payer for s in settlements} | {s.payee for s in settlements}
+    people = people_of(db, ids)
 
-    def person(username: str) -> UserSummary:
-        return UserSummary(username=username, name=names.get(username, username))
+    def person(user_id: int) -> UserSummary:
+        return people.get(user_id) or UserSummary(username="unknown", name="Unknown")
 
     shares_of: dict[int, list[ExpenseShare]] = {}
     for share in shares:
         shares_of.setdefault(share.expense_id, []).append(share)
 
-    notifications = db.scalars(select(Notification).where(Notification.username == user.username).order_by(Notification.id)).all()
+    notifications = db.scalars(select(Notification).where(Notification.user_id == user.id).order_by(Notification.id)).all()
     return AccountExport(
         exported_at=utcnow(),
         profile=ExportProfile(
             username=user.username,
             name=user.name,
-            phone=user.phone,
             email=user.email,
-            currency=user.currency,
-            notifications_on=user.notifications_on,
+            phone=user.phone,
             created_at=user.created_at,
         ),
         spaces=[
@@ -85,10 +84,10 @@ def build_export(db: Session, user: User) -> AccountExport:
                 name=space.name,
                 icon=space.icon,
                 currency=space.currency,
-                owner_username=space.created_by,
+                owner_username=person(space.created_by).username,
                 created_at=space.created_at,
                 members=[
-                    ExportMember(username=m.username, name=names.get(m.username, m.username), position=m.position, joined_at=m.joined_at)
+                    ExportMember(username=person(m.user_id).username, name=person(m.user_id).name, position=m.position, joined_at=m.joined_at)
                     for m in members
                     if m.space_id == space.id
                 ],
@@ -110,7 +109,7 @@ def build_export(db: Session, user: User) -> AccountExport:
                 disputed=any(s.status == ShareStatus.REJECTED for s in shares_of.get(e.id, [])),
                 shares=[
                     ShareOut(
-                        user=person(s.username),
+                        user=person(s.user_id),
                         amount_minor=s.amount_minor,
                         status=s.status,
                         responded_at=s.responded_at,

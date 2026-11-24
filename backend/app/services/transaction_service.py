@@ -28,7 +28,7 @@ from app.schemas.group import SettlementRow
 from app.schemas.transaction import ExpenseTransaction, PaymentTransaction, TransactionListOut, TransactionSpace
 from app.schemas.user import UserSummary
 from app.services import balance_service, expense_service
-from app.services.space_access import member_space
+from app.services.space_access import member_space, people_of
 from app.utils.errors import field_error
 
 PAYMENT, EXPENSE = 0, 1  # the kind in a marker, and the order of a tie: a payment before an expense
@@ -82,7 +82,7 @@ def list_transactions(
 ) -> TransactionListOut:
     """One page of the viewer's transactions. `kind` is "all", "expenses" or "payments"."""
     marker = _parse_marker(before) if before is not None else None
-    me = user.username
+    me = user.id
     spaces = balance_service.spaces_of(db, me)
     if space_id is not None:
         member_space(db, me, space_id)  # a space you are not in does not exist for you: 404
@@ -111,22 +111,22 @@ def list_transactions(
     window = entries[: limit + 1]
     page = window[:limit]
 
-    usernames: set[str] = set()
+    ids: set[int] = set()
     for _, entry_kind, _, row, _ in page:
         if entry_kind == EXPENSE:
-            usernames |= {row[0].paid_by, row[0].created_by}
+            ids |= {row[0].paid_by, row[0].created_by}
         else:
-            usernames |= {row.payer, row.payee}
-    names = dict(db.execute(select(User.username, User.name).where(User.username.in_(usernames))).all()) if usernames else {}
+            ids |= {row.payer, row.payee}
+    people = people_of(db, ids)
 
-    def person(username: str) -> UserSummary:
-        return UserSummary(username=username, name=names.get(username, username))
+    def person(user_id: int) -> UserSummary:
+        return people.get(user_id) or UserSummary(username="unknown", name="Unknown")
 
     items = []
     for _, entry_kind, _, row, space in page:
         where = TransactionSpace(space_id=space.id, space_name=space.name, currency=space.currency)
         if entry_kind == EXPENSE:
-            card = expense_service.expense_row(*row, names)
+            card = expense_service.expense_row(*row, people)
             items.append(ExpenseTransaction(**card.model_dump(), **where.model_dump()))
         else:
             payment = SettlementRow(
